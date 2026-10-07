@@ -1,0 +1,30 @@
+# Line-ending policy.
+#
+# Without this file, a Windows checkout with core.autocrlf=true materializes
+# every file as CRLF, which makes `gofmt -l .` report the whole tree as
+# unformatted (gofmt's output is always LF). Pinning Go sources to LF in the
+# working tree keeps `gofmt -l .` a meaningful check on every platform.
+
+# Default: normalize text files to LF in the repository.
+* text=auto
+
+# Go sources are always LF, in the repository and in the working tree.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+*.md text eol=lf
+
+# Binary files are never converted.
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.pdf binary

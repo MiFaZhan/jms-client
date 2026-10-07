@@ -1,0 +1,21 @@
+# Build output
+/jms
+/jms.exe
+/dist/
+*.exe
+*.test
+*.out
+
+# Local scratch
+/.tmp/
+/tmp/
+*.local
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Agent tooling runtime state (pi-subagents worktrees, cleanup plans, etc.)
+/.pi/
