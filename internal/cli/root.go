@@ -112,6 +112,19 @@ func executeArgsContext(ctx context.Context, args []string, deps Deps) int {
 	root.SetArgs(args)
 	root.SetContext(ctx)
 
+	code := runRoot(ctx, root, deps)
+
+	// The audit log is flushed for every command, not just the long-lived
+	// ones: delivery is asynchronous, so a one-shot `jms exec` would
+	// otherwise exit before its own record reached the file.
+	if err := deps.Runtime.Close(); err != nil {
+		fmt.Fprintf(deps.Err, "Warning: audit log: %s\n", err)
+	}
+	return code
+}
+
+// runRoot executes the command tree and maps the result to an exit code.
+func runRoot(ctx context.Context, root *cobra.Command, deps Deps) int {
 	if err := root.ExecuteContext(ctx); err != nil {
 		// A command that knows its exit status (a remote command's status,
 		// say) owns its own diagnostics and reports the status directly.

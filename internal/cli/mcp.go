@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -64,8 +65,29 @@ func (h *hostHandle) Close() error {
 // refusing to serve MCP because a pipe is already taken would break the
 // primary job. The host is closed when the server returns, so a client
 // disconnecting does not leak the endpoint.
+//
+// This is also the process where pooled terminals live longest, so the idle
+// reaper and the audit writer are started and torn down here (DESIGN.md
+// 「连接池」3.2, 「审计日志」).
 func runMCP(cmd *cobra.Command, deps Deps) error {
 	ctx := commandContext(cmd)
+
+	if err := deps.Runtime.AuditErr; err != nil {
+		fmt.Fprintf(deps.Err, "Warning: audit log unavailable: %v\n", err)
+	} else if err := deps.Runtime.Audit.Prepare(); err != nil {
+		// The host is long-lived, so a broken audit location is worth saying
+		// now rather than at the first tool call.
+		fmt.Fprintf(deps.Err, "Warning: audit log unavailable: %v\n", err)
+	}
+	defer func() {
+		if err := deps.Runtime.Close(); err != nil {
+			fmt.Fprintf(deps.Err, "Warning: audit log: %v\n", err)
+		}
+	}()
+
+	// The reaper closes terminals that sat idle past the TTL. It runs for the
+	// life of the host and stops when the client disconnects.
+	deps.Runtime.StartReaper(ctx)
 
 	host, err := startHost(ctx, deps)
 	if err != nil {
@@ -160,7 +182,7 @@ func mcpOptions(deps Deps) mcpserver.Options {
 	return mcpserver.Options{
 		ConfigPath: deps.ConfigPath,
 		Version:    effectiveVersion(),
-		Actor:      mcpActor(),
+		Actor:      mcpActor(deps),
 		Bus:        deps.Runtime.Bus,
 		Sessions:   deps.Runtime.Sessions,
 		Terminals:  deps.Runtime.Terminals,
@@ -174,9 +196,15 @@ func mcpOptions(deps Deps) mcpserver.Options {
 
 // mcpActor names this process in the audit stream, so a reader of the log can
 // tell which client ran what (DESIGN.md「审计日志」).
-func mcpActor() string {
-	if v := os.Getenv("JMS_ACTOR"); v != "" {
+//
+// JMS_ACTOR overrides it, and the Runtime's actor is the fallback: the
+// runtime resolved the same variable when it built the bus.
+func mcpActor(deps Deps) string {
+	if v := strings.TrimSpace(os.Getenv(actorEnv)); v != "" {
 		return v
+	}
+	if deps.Runtime != nil && deps.Runtime.Actor != "" {
+		return deps.Runtime.Actor
 	}
 	return "mcp"
 }
