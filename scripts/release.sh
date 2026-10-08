@@ -12,6 +12,9 @@
 # Usage:
 #   scripts/release.sh v0.1.1            # build, publish, verify
 #   scripts/release.sh v0.1.1 --dry-run  # build and verify locally only
+#   scripts/release.sh v0.1.1 --keep-draft
+#                                        # publish the release as a draft
+#                                        # and stop before the registry
 #
 # Exit status is non-zero on the first failed verification, because a
 # release that half-succeeded is worse than one that did not start.
@@ -23,7 +26,14 @@ root=$(pwd)
 
 tag=${1:-}
 dry_run=false
-[ "${2:-}" = "--dry-run" ] && dry_run=true
+keep_draft=false
+for arg in "${@:2}"; do
+    case $arg in
+        --dry-run) dry_run=true ;;
+        --keep-draft) keep_draft=true ;;
+        *) echo "release: unknown option $arg" >&2; exit 2 ;;
+    esac
+done
 
 if [ -z "$tag" ]; then
     echo "usage: scripts/release.sh <tag> [--dry-run]" >&2
@@ -159,6 +169,25 @@ gh release upload "$tag" dist/jms-client.mcpb --clobber
 step "Verifying the release assets"
 gh release view "$tag" --json assets --jq '.assets[].name' | sort
 
+step "Publishing the release"
+# The order here is not cosmetic. The registry record points at a
+# releases/download/<tag>/<file> URL, and GitHub returns 404 for that URL
+# while the release is a draft. Publishing the registry record first would
+# therefore register an address that does not resolve, and every MCP client
+# that tried to install the bundle would fail. So the release goes public
+# before the registry is told about it.
+#
+# --keep-draft preserves the human-confirmation path: the release stays a
+# draft and the registry step is skipped, leaving both for a person to do.
+if $keep_draft; then
+    echo "  --keep-draft: leaving the release as a draft and skipping the registry"
+    echo "  When ready: gh release edit $tag --draft=false && (cd mcpb && mcp-publisher publish)"
+else
+    gh release edit "$tag" --draft=false
+    echo "  release $tag is public"
+fi
+
+if ! $keep_draft; then
 step "Verifying the MCP Registry record"
 # The registry stores the hash of the bundle. If it disagrees with what was
 # uploaded, every client that installs the bundle rejects it, so this is
@@ -210,6 +239,7 @@ elif [ "$reg_sha" = "$bundle_sha" ]; then
 else
     fail "registry sha for $version ($reg_sha) does not match the bundle ($bundle_sha)"
 fi
+fi
 
 step "Verifying the Go module proxy"
 # `go install ...@latest` only works once the proxy has indexed the tag.
@@ -223,9 +253,6 @@ done
 
 step "Release $tag complete"
 cat <<EOF
-  The GitHub release is a draft. Check the assets above, then publish it:
-    gh release edit $tag --draft=false
-
   The MCP registry record for $version was published and verified above.
 
   Scoop: .goreleaser.yaml sets skip_upload, so the manifest in
