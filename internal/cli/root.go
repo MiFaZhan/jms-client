@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -15,12 +16,52 @@ import (
 // flagConfig is the global configuration-file override.
 const flagConfig = "config"
 
-// Version is the release version, injected at build time with
+// Version is the release version. It is normally injected at build time
+// with
 //
 //	go build -ldflags "-X github.com/MiFaZhan/jms-client/internal/cli.Version=1.2.3"
 //
-// M1 is pre-release, so the default is a development marker.
+// but `go install github.com/MiFaZhan/jms-client/cmd/jms@latest` cannot
+// pass ldflags, so the version falls back to the module version Go stamps
+// into the binary (see effectiveVersion). The literal below is only the
+// last resort, for a build that has neither.
 var Version = "0.1.0-dev"
+
+// effectiveVersion reports the version to display.
+//
+// Precedence: an injected Version (a release build or a local ldflags
+// build), then the module version `go install` records in the build info,
+// then the compiled-in default. Without the middle step every `go install`
+// user would see "0.1.0-dev" and be unable to tell which release they
+// actually have.
+func effectiveVersion() string {
+	if Version != "" && Version != devVersion {
+		return Version
+	}
+	if v := moduleVersion(); v != "" {
+		return v
+	}
+	return Version
+}
+
+// devVersion marks a build with no injected version.
+const devVersion = "0.1.0-dev"
+
+// moduleVersion reads the module version recorded by the Go toolchain.
+//
+// It returns "" for a plain `go build` from a working copy, where the
+// toolchain records "(devel)" rather than a version.
+func moduleVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info == nil {
+		return ""
+	}
+	v := info.Main.Version
+	if v == "" || v == "(devel)" {
+		return ""
+	}
+	return v
+}
 
 // Execute runs the jms command line and returns the process exit code.
 //
@@ -152,7 +193,7 @@ func newVersionCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_, err := fmt.Fprintf(cmd.OutOrStdout(), "jms %s (%s/%s)\n",
-				Version, runtime.GOOS, runtime.GOARCH)
+				effectiveVersion(), runtime.GOOS, runtime.GOARCH)
 			return err
 		},
 	}
