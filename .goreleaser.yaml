@@ -84,6 +84,52 @@ release:
   # mcpb/server.json matches it.
   replace_existing_artifacts: true
 
+# Scoop: writes bucket/jms-client.json into a repository of our own, which
+# users add with `scoop bucket add`. No review queue, so a release is
+# installable as soon as the tag is pushed.
+scoops:
+  - name: jms-client
+    # The repository must already exist and the token must be able to push to
+    # it; GoReleaser writes the manifest, it does not create the repo.
+    repository:
+      owner: MiFaZhan
+      name: scoop-bucket
+      branch: main
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    # A single manifest works for every architecture: Scoop picks the
+    # matching url/arch block itself, so unlike the MCPB bundle this needs no
+    # launcher.
+    url_template: "https://github.com/MiFaZhan/jms-client/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    homepage: https://github.com/MiFaZhan/jms-client
+    description: JumpServer v4 bastion CLI and MCP server
+    license: MIT
+    skip_upload: true
+
+# Winget: generates the manifest that would be submitted to
+# microsoft/winget-pkgs. skip_upload keeps it in dist/ for now: the real
+# submission is a pull request against a repository we do not control, and
+# that should be a deliberate step rather than a side effect of tagging.
+winget:
+  - name: jms-client
+    package_identifier: MiFaZhan.jms-client
+    publisher: MiFaZhan
+    publisher_url: https://github.com/MiFaZhan
+    publisher_support_url: https://github.com/MiFaZhan/jms-client/issues
+    license: MIT
+    license_url: https://github.com/MiFaZhan/jms-client/blob/main/LICENSE
+    copyright: MiFaZhan
+    short_description: JumpServer v4 bastion CLI and MCP server
+    description: >-
+      Access the assets behind a JumpServer v4 bastion host: list authorized
+      assets, run commands, and transfer files over SFTP. Also runs as a stdio
+      MCP server so an AI assistant can reach the same pooled connections.
+    homepage: https://github.com/MiFaZhan/jms-client
+    # The Windows archives are the ones winget installs; the tar.gz files are
+    # for macOS and Linux and are not part of the manifest.
+    ids:
+      - jms-archive
+    skip_upload: true
+
 # The bundle is assembled by a script rather than a native GoReleaser
 # feature: MCPB is a zip with a manifest and a launcher, and no packager
 # exists for it yet.
