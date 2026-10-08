@@ -8,11 +8,32 @@
 # Default: normalize text files to LF in the repository.
 * text=auto
 
+# This file itself, so a Windows checkout cannot rewrite it to CRLF and
+# start fighting the rules below.
+.gitattributes text eol=lf
+
 # Go sources are always LF, in the repository and in the working tree.
 *.go text eol=lf
 go.mod text eol=lf
 go.sum text eol=lf
 *.md text eol=lf
+
+# Shell scripts must be LF even on Windows. A CRLF shebang makes the kernel
+# look for an interpreter literally named "/bin/sh\r", and the script fails
+# with a confusing "not found". These files are also packed verbatim into
+# the MCPB bundle, so a CRLF working copy would ship a launcher that cannot
+# run on macOS or Linux.
+*.sh text eol=lf
+
+# YAML and JSON are LF: they are read by tooling on every platform and a
+# mixed line ending makes diffs noisy.
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+
+# Windows batch files keep CRLF, which is what cmd.exe has always expected.
+*.cmd text eol=crlf
+*.bat text eol=crlf
 
 # Binary files are never converted.
 *.exe binary

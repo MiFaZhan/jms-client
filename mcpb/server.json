@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.MiFaZhan/jms-client",
+  "title": "JumpServer Bastion (jms)",
+  "description": "Run commands, transfer files and browse assets on a JumpServer v4 bastion from your AI assistant.",
+  "repository": {
+    "url": "https://github.com/MiFaZhan/jms-client",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/MiFaZhan/jms-client/releases/download/v0.1.0/jms-client.mcpb",
+      "fileSha256": "99d3b281f5b54d83f568a0a6be1d3457cc03b80a17e5e9536158d911be303579",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

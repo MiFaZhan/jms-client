@@ -1,0 +1,91 @@
+# GoReleaser configuration for jms-client.
+#
+# Produces one static binary per platform, a checksums file, and the MCPB
+# bundle that carries all of them (see mcpb/ and the mcpb-bundle hook
+# below). Every target is built with CGO disabled, which is what makes the
+# binaries portable: the bundle ships them pre-compiled, so a user needs no
+# Go toolchain.
+#
+#   goreleaser release --snapshot --clean   # local dry run, no publish
+#   goreleaser release --clean              # publish on a tag
+#
+# Docs: https://goreleaser.com
+
+version: 2
+
+project_name: jms-client
+
+before:
+  hooks:
+    - go mod verify
+    # The suite gates the release: a red test must not become a published
+    # binary, which is the whole point of releasing from CI rather than a
+    # laptop.
+    - go test ./...
+
+builds:
+  - id: jms
+    main: ./cmd/jms
+    binary: jms
+    env:
+      - CGO_ENABLED=0
+    # -s -w strips the symbol table and DWARF data, cutting roughly a third
+    # off each binary. The bundle ships six of them, so the saving is worth
+    # losing symbolised stack traces in a released build.
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/MiFaZhan/jms-client/internal/cli.Version=v{{ .Version }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # 32-bit targets are not built: the bundle and the release both target
+    # machines that run a 64-bit AI desktop client.
+
+archives:
+  - id: jms-archive
+    ids:
+      - jms
+    # tar.gz everywhere except Windows, where zip is what users expect.
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  # Release notes are written by hand in the GitHub release; GoReleaser's
+  # generated list duplicates them and, with a squashed history, is noise.
+  disable: true
+
+release:
+  draft: true
+  # The MCPB bundle is uploaded by the mcpb-bundle hook below, which runs
+  # after the binaries exist. draft:true keeps the release unpublished until
+  # a human has confirmed the bundle is attached and the SHA-256 in
+  # mcpb/server.json matches it.
+  replace_existing_artifacts: true
+
+# The bundle is assembled by a script rather than a native GoReleaser
+# feature: MCPB is a zip with a manifest and a launcher, and no packager
+# exists for it yet.
+announce:
+  skip: true

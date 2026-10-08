@@ -389,9 +389,21 @@ func TestCancelledContextDoesNotBurnRetries(t *testing.T) {
 
 	inFlight.Wait()
 	cancel()
+
+	// The handler is deliberately left blocked while Get runs, so the only
+	// way Get can return is by observing the cancellation. Releasing it here
+	// would race the abort against the response: if the 200 arrived first,
+	// Get would succeed and the assertions below would fail intermittently
+	// under load. Unblock it only after Get has returned.
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(10 * time.Second):
+		close(release)
+		t.Fatal("Get did not return after the context was cancelled")
+	}
 	close(release)
 
-	err := <-done
 	apiErr, ok := AsAPIError(err)
 	if !ok {
 		t.Fatalf("Get() = %T(%v), want *APIError", err, err)

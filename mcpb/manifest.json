@@ -1,0 +1,83 @@
+{
+  "manifest_version": "0.4",
+  "name": "jms-client",
+  "display_name": "JumpServer Bastion (jms)",
+  "version": "0.1.0",
+  "description": "Run commands, transfer files and browse assets on a JumpServer v4 bastion from your AI assistant.",
+  "long_description": "Access the assets behind a [JumpServer v4](https://docs.jumpserver.org/zh/v4/) bastion host: list what you are authorized to reach, run commands, and move files over SFTP.\n\nConnections are pooled, so one login serves many commands instead of re-authenticating per call. A server may define both an internal and an external address, and the tool picks whichever is reachable, so the same configuration works inside and outside the office network.\n\nCredentials are never written to the configuration file: the password and TOTP secret live in the operating system credential store (Windows Credential Manager, macOS Keychain, or Linux Secret Service). Run `jms config add <alias>` once to store them.\n\nEverything the assistant executes is also written to a local JSONL audit stream, which you can follow with `jms tail` or join interactively with `jms attach`.",
+  "author": {
+    "name": "MiFaZhan"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MiFaZhan/jms-client"
+  },
+  "homepage": "https://github.com/MiFaZhan/jms-client",
+  "documentation": "https://github.com/MiFaZhan/jms-client#readme",
+  "support": "https://github.com/MiFaZhan/jms-client/issues",
+  "keywords": [
+    "jumpserver",
+    "bastion",
+    "ssh",
+    "sftp",
+    "devops",
+    "remote-access"
+  ],
+  "license": "MIT",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/jms-darwin-aarch64",
+    "mcp_config": {
+      "command": "${__dirname}/launcher.sh",
+      "args": [
+        "mcp"
+      ],
+      "env": {},
+      "platform_overrides": {
+        "win32": {
+          "command": "${__dirname}/launcher.cmd",
+          "args": [
+            "mcp"
+          ]
+        }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "jms_ls",
+      "description": "List or search authorized assets on a JumpServer."
+    },
+    {
+      "name": "jms_resolve_asset",
+      "description": "Resolve an asset to its connection info (address, account, protocol)."
+    },
+    {
+      "name": "jms_exec",
+      "description": "Execute a command on an asset and return its output."
+    },
+    {
+      "name": "jms_sftp_upload",
+      "description": "Upload a local file to an asset via SFTP."
+    },
+    {
+      "name": "jms_sftp_download",
+      "description": "Download a file from an asset to the local machine via SFTP."
+    },
+    {
+      "name": "jms_sftp_relay",
+      "description": "Relay a file between two assets (streamed, no local disk)."
+    },
+    {
+      "name": "jms_config_list",
+      "description": "List configured JumpServer servers, marking the default with '*'."
+    }
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ]
+  }
+}
