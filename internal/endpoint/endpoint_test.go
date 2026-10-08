@@ -208,7 +208,7 @@ func TestSelectAndLoginInternalPreferredSucceeds(t *testing.T) {
 	}
 }
 
-// TestSelectAndLoginFallbackWhenAllProbesFail covers DESIGN.md §11.9:
+// TestSelectAndLoginFallbackWhenAllProbesFail covers DESIGN.md「端点故障转移」:
 // the probe is an accelerator, not a verdict.
 func TestSelectAndLoginFallbackWhenAllProbesFail(t *testing.T) {
 	srv := server("s", "https://in.example.com", "https://out.example.com", "")

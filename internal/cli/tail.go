@@ -18,7 +18,7 @@ import (
 )
 
 // auditFilePrefix and auditFileSuffix bracket the per-pid audit file names
-// written by obs.AuditWriter: audit-YYYYMMDD-<pid>.jsonl (DESIGN.md §12.3).
+// written by obs.AuditWriter: audit-YYYYMMDD-<pid>.jsonl (DESIGN.md「审计日志」).
 const (
 	auditFilePrefix = "audit-"
 	auditFileSuffix = ".jsonl"
@@ -119,7 +119,7 @@ func printAuditEvent(out io.Writer, e obs.Event, asJSON bool) error {
 }
 
 // renderAuditEvent renders one event as a single line, matching the shape
-// DESIGN.md §12.5 shows for the attach view.
+// DESIGN.md「IPC 宿主」 shows for the attach view.
 func renderAuditEvent(e obs.Event) string {
 	var b strings.Builder
 	b.WriteString(e.TS.Format("15:04:05"))
@@ -169,7 +169,7 @@ func renderAuditEvent(e obs.Event) string {
 	return b.String()
 }
 
-// endpointBadge renders the internal/external marker DESIGN.md §4.7 point 6
+// endpointBadge renders the internal/external marker DESIGN.md「端点故障转移」第 6 点
 // asks for in the tail and attach output.
 func endpointBadge(kind string) string {
 	switch strings.ToLower(kind) {

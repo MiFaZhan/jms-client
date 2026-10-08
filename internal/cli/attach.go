@@ -31,8 +31,7 @@ keeping a window open cannot turn an accidental keystroke into a command.
 Pass --attach to enable the operator prompt.
 
 Operator commands share the host's terminal pool, so a human command and an
-AI command serialize on the same connection instead of racing for it
-(DESIGN.md §12.4, §12.5).`,
+AI command serialize on the same connection instead of racing for it.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAttach(cmd, *deps, attachOptions{

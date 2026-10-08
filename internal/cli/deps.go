@@ -26,7 +26,7 @@ type Deps struct {
 	Creds config.CredentialStore
 
 	// Probe checks address reachability. Nil means endpoint.ProbeWith with
-	// the server's configured proxy policy (DESIGN.md §6.1), which falls back
+	// the server's configured proxy policy (DESIGN.md「代理策略」), which falls back
 	// to endpoint.TCPProbe when no proxy is configured.
 	Probe endpoint.ProbeFunc
 
@@ -86,7 +86,7 @@ func (d Deps) WithDefaults() Deps {
 		d.Creds = config.Chain(config.NewEnvStore(), config.NewKeyringStore())
 	}
 	// Probe is deliberately left nil when unset. The default depends on the
-	// server's proxy policy (DESIGN.md §6.1), which is only known after the
+	// server's proxy policy (DESIGN.md「代理策略」), which is only known after the
 	// configuration is loaded, so each call site resolves it via
 	// endpoint.ProbeWith. Filling in TCPProbe here would silently pin every
 	// command to a direct dial and reintroduce the probe/login split.

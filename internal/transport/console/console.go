@@ -3,7 +3,7 @@
 //
 // Windows needs the console API rather than termios, and the Python
 // implementation needed three rounds of fixes for VT sequences, the GBK code
-// page and held-key repeat counts (DESIGN.md §11.5), so this is written
+// page and held-key repeat counts (DESIGN.md「交互式终端」), so this is written
 // against x/term plus x/sys/windows rather than hand-rolled escape handling.
 //
 // The three Windows lessons are encoded here rather than re-learned:
@@ -134,7 +134,7 @@ func Open(opts Options) (*Session, func(), error) {
 
 	// Remote output is written as a byte stream. On Windows a console handle
 	// is wrapped so the bytes are decoded and handed to WriteConsoleW, which
-	// is what survives a GBK code page (DESIGN.md §11.5).
+	// is what survives a GBK code page (DESIGN.md「交互式终端」).
 	sink := out
 	if f, ok := out.(*os.File); ok && ops.newWriter != nil {
 		sink = ops.newWriter(f)
@@ -158,7 +158,7 @@ func Open(opts Options) (*Session, func(), error) {
 // IsTerminal reports whether fd is a terminal.
 //
 // It is stdin-only on Windows, matching the fix the Python implementation
-// needed for redirected output (DESIGN.md §11.5): checking stdout reports
+// needed for redirected output (DESIGN.md「交互式终端」): checking stdout reports
 // false for `jms login > file`, which would silently disable raw mode for a
 // perfectly interactive session.
 func IsTerminal(fd int) bool {

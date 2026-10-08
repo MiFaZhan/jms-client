@@ -312,7 +312,7 @@ func TestVersionPrintsVersionAndExitsZero(t *testing.T) {
 	}
 }
 
-// TestHelpAdvertisesTheFullCommandSurface pins DESIGN.md §6: every command
+// TestHelpAdvertisesTheFullCommandSurface pins DESIGN.md「总体架构」: every command
 // in the documented surface is registered.
 func TestHelpAdvertisesTheFullCommandSurface(t *testing.T) {
 	want := []string{

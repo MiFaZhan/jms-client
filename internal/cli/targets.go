@@ -72,7 +72,7 @@ func resolveCommandTarget(cmd *cobra.Command, deps Deps, t commandTarget) (*serv
 // connect authenticates and returns the session bound to the chosen
 // endpoint, reporting the selection on stderr the way `jms ls` does.
 //
-// The endpoint is forced when force is non-empty (DESIGN.md §4.7 point 7).
+// The endpoint is forced when force is non-empty (DESIGN.md「端点故障转移」第 7 点).
 func (c *serverConnection) connect(ctx context.Context, force endpoint.Kind) (*auth.Session, endpoint.Kind, error) {
 	session, sel, err := selectEndpoint(ctx, c.deps, newPrompter(c.deps), c.cfg, c.srv, force, c.password, c.secret)
 	if err != nil {
@@ -129,7 +129,7 @@ func execTimeout(seconds int) time.Duration {
 // preferredBackend returns the backend remembered for the endpoint the
 // session is bound to, if any. It lets a cold start skip the auto sequence
 // instead of paying a handshake timeout on a blocked port first
-// (DESIGN.md §4.7 point 4).
+// (DESIGN.md「端点故障转移」第 4 点).
 func (c *serverConnection) preferredBackend(kind endpoint.Kind) transport.BackendType {
 	if c.deps.Runtime == nil || c.deps.State == nil {
 		return ""

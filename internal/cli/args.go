@@ -112,9 +112,9 @@ func loginSession(ctx context.Context, deps Deps, p *prompter, srv *config.Serve
 }
 
 // selectEndpoint picks an address under the failover policy of
-// DESIGN.md §4.7 and authenticates against it.
+// DESIGN.md「端点故障转移」 and authenticates against it.
 //
-// The probe and the login share one proxy policy (DESIGN.md §6.1): the
+// The probe and the login share one proxy policy (DESIGN.md「代理策略」): the
 // probe is only an accelerator for the login, so it has to travel the
 // same route. A server with no proxy configured gets the direct policy,
 // which is also what every transport used before this existed.

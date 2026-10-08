@@ -2,7 +2,7 @@
 //
 // KoKo's WebSocket terminal only accepts the jms_sessionid cookie from a
 // Django form login, while the REST API needs a Bearer token — so a
-// usable session needs both (DESIGN.md §3.4). The REST transport itself
+// usable session needs both (DESIGN.md「登录双流程」). The REST transport itself
 // lives in internal/api.
 //
 // Dependency direction: auth depends on api and config.
@@ -25,7 +25,7 @@ import (
 	"github.com/MiFaZhan/jms-client/internal/netproxy"
 )
 
-// Endpoint paths used by the dual login (DESIGN.md §3.4).
+// Endpoint paths used by the dual login (DESIGN.md「登录双流程」).
 const (
 	PathAPILogin     = "/api/v1/authentication/auth/"
 	PathMFAChallenge = "/api/v1/authentication/mfa/challenge/"
@@ -62,7 +62,7 @@ type Credentials struct {
 //
 // The address is bound for the session's whole lifetime: REST calls and
 // (in later milestones) the KoKo connection both derive from BaseURL
-// (DESIGN.md §4.7).
+// (DESIGN.md「端点故障转移」).
 type Session struct {
 	Server  *config.ServerConfig
 	Client  *api.Client
@@ -70,8 +70,8 @@ type Session struct {
 	// Proxy is the resolved proxy policy the session was established
 	// with. Every later connection derived from this session (KoKo
 	// WebSocket, SSH, SFTP) must use the same policy, or the failover
-	// policy in §4.7 would reason about a different network than the
-	// login it observed (DESIGN.md §6.1).
+	// policy in 「端点故障转移」 would reason about a different network than the
+	// login it observed (DESIGN.md「代理策略」).
 	Proxy netproxy.Proxy
 }
 
@@ -81,7 +81,7 @@ type Session struct {
 // session) has the zero value, which is the direct policy. Every
 // transport derived from a session must dial through this policy so that
 // probe, login, KoKo WebSocket, SSH and SFTP all measure one network
-// (DESIGN.md §6.1).
+// (DESIGN.md「代理策略」).
 func (s *Session) NetProxy() netproxy.Proxy {
 	if s == nil {
 		return netproxy.Direct()
@@ -117,7 +117,7 @@ func (s *Session) CSRF() string {
 // connection.
 //
 // It is LoginWithProxy with the direct policy, which is the default
-// (DESIGN.md §6.1): jms never reads HTTP_PROXY/HTTPS_PROXY on its own.
+// (DESIGN.md「代理策略」): jms never reads HTTP_PROXY/HTTPS_PROXY on its own.
 func Login(ctx context.Context, srv *config.ServerConfig, baseURL string, creds Credentials,
 	otpPrompt func() (string, error)) (*Session, error) {
 
@@ -137,7 +137,7 @@ func Login(ctx context.Context, srv *config.ServerConfig, baseURL string, creds 
 //
 // Any failure during the login flow is reported as an *api.AuthError, so
 // callers can distinguish "this endpoint rejects the credential" from
-// "this endpoint is unreachable" (DESIGN.md §4.7).
+// "this endpoint is unreachable" (DESIGN.md「端点故障转移」).
 //
 // The proxy policy is recorded on the session so every transport derived
 // from it stays on the same network path.
@@ -281,7 +281,7 @@ func formLogin(ctx context.Context, sess *Session, creds Credentials) error {
 
 // mfaRequired reports whether a login response asks for an MFA code.
 // Field names differ across JumpServer versions, so both are checked
-// (DESIGN.md §3.4).
+// (DESIGN.md「登录双流程」).
 func mfaRequired(data map[string]any) bool {
 	if data == nil {
 		return false
@@ -323,12 +323,12 @@ var credentialRejection = map[int]bool{
 }
 
 // classifyLoginError maps a failed login step onto the two classes the
-// endpoint-selection policy needs (DESIGN.md §4.7 point 2):
+// endpoint-selection policy needs (DESIGN.md「端点故障转移」第 2 点):
 //
 //   - a credential rejection becomes *api.AuthError and is terminal - a
 //     wrong password is not fixed by another address;
 //   - a network-class failure (transport error, 5xx) is returned as-is so
-//     the caller can fail over to the next candidate (§11.9: TCP up but the
+//     the caller can fail over to the next candidate (「端点故障转移」: TCP up but the
 //     service behind it broken is exactly this class).
 //
 // The Python reference collapses both into AuthError because its failover is

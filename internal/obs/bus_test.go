@@ -8,7 +8,7 @@ import (
 )
 
 // waitTimeout bounds a wait for an asynchronous delivery. Delivery is
-// deliberately asynchronous (DESIGN.md §11.8), so a test must wait for the
+// deliberately asynchronous (DESIGN.md「可观测性」), so a test must wait for the
 // observable effect rather than assume it happened inside Publish.
 const waitTimeout = 5 * time.Second
 

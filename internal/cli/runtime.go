@@ -26,7 +26,7 @@ import (
 // One Runtime is built per process, so the pools inside it survive across
 // commands. That is the whole point of the rewrite: a second `jms exec` on
 // the same asset reuses the live connection instead of logging in again
-// (DESIGN.md §4).
+// (DESIGN.md「连接池」).
 type Runtime struct {
 	// Sessions holds authenticated sessions, keyed by server alias.
 	Sessions *connpool.SessionPool
@@ -145,7 +145,7 @@ func defaultAuditDir(d Deps) string {
 // defaultTransfer resolves the asset and runs one transfer through a fresh
 // engine.
 //
-// A transfer is a short-lived connection by design (DESIGN.md §5: SFTP
+// A transfer is a short-lived connection by design (DESIGN.md「总体架构」: SFTP
 // connections are not pooled), so it is built per call rather than cached.
 // req.Asset carries the asset NAME, not a resolved Info: the engine resolves
 // it on demand through Engine.AssetName (Engine.Asset is assets.Info and
@@ -158,7 +158,7 @@ func defaultTransfer(ctx context.Context, req TransferRequest) (xfer.Result, err
 }
 
 // auditEnabled reports whether the audit writer should be created, honouring
-// JMS_AUDIT=off (DESIGN.md §12.3).
+// JMS_AUDIT=off (DESIGN.md「审计日志」).
 func auditEnabled() bool { return true }
 
 // nowOr returns the injected clock, or time.Now.

@@ -5,7 +5,7 @@
 // The Python MCP server performed a full login -> resolve -> connect ->
 // teardown cycle for every tool call. Here a session is logged in once and
 // reused, and a terminal is opened once and kept until it goes idle or
-// breaks (DESIGN.md §4).
+// breaks (DESIGN.md「连接池」).
 package connpool
 
 import (
@@ -22,7 +22,7 @@ import (
 	"github.com/MiFaZhan/jms-client/internal/transport"
 )
 
-// Defaults from DESIGN.md §4.5.
+// Defaults from DESIGN.md「数值基线」
 const (
 	// IdleTTL is how long a terminal may sit unused before the reaper
 	// closes it.
@@ -49,7 +49,7 @@ type sessionCall struct {
 // Health is verified lazily: there is no periodic probe. A call that hits an
 // api.AuthError re-logs in once and retries the operation, which avoids idle
 // probe traffic while still recovering from an expired token (DESIGN.md
-// §4.2).
+// 「SessionPool」).
 //
 // The pool's half of that retry-once policy is Invalidate: the caller that
 // sees an api.AuthError drops the alias and re-issues the operation once, and
@@ -76,7 +76,7 @@ func NewSessionPool() *SessionPool {
 // the server demands MFA and no secret is stored.
 //
 // The key is the server alias: one alias means one endpoint, and a session is
-// bound to the address it logged in against (DESIGN.md §4.7 point 1). The
+// bound to the address it logged in against (DESIGN.md「端点故障转移」第 1 点). The
 // alias is deliberately part of the key even though baseURL identifies the
 // endpoint, because the alias is what Invalidate is given and what the CLI
 // and MCP surfaces name.
@@ -89,7 +89,7 @@ func (p *SessionPool) Get(ctx context.Context, srv *config.ServerConfig, baseURL
 //
 // The policy is recorded on the session so the KoKo WebSocket, SSH and
 // SFTP connections derived from it reach the same network the login did
-// (DESIGN.md §6.1).
+// (DESIGN.md「代理策略」).
 func (p *SessionPool) GetWithProxy(ctx context.Context, srv *config.ServerConfig, baseURL string,
 	creds auth.Credentials, otpPrompt func() (string, error), px netproxy.Proxy) (*auth.Session, error) {
 	if p == nil {
@@ -232,7 +232,7 @@ type pooledTerm struct {
 	term transport.Terminal
 	// mu serializes execution on this terminal: a shared PTY or
 	// exec-channel cannot carry two commands at once, and ordering keeps
-	// output attribution unambiguous (DESIGN.md §4.3 point 1). It also
+	// output attribution unambiguous (DESIGN.md「TerminalPool」第 1 点). It also
 	// guards lastUse, so the reaper never closes a terminal mid-command.
 	mu      sync.Mutex
 	lastUse time.Time
@@ -249,7 +249,7 @@ type ExecOptions struct {
 	Timeout time.Duration
 	// OnBackend, when set, is called with the backend the terminal actually
 	// uses, once the terminal is in hand. It lets a caller record backend
-	// memory (DESIGN.md §4.7 point 4) without probing the terminal afterwards.
+	// memory (DESIGN.md「端点故障转移」第 4 点) without probing the terminal afterwards.
 	OnBackend func(transport.BackendType)
 }
 
@@ -257,19 +257,19 @@ type ExecOptions struct {
 //
 // The same asset always uses the same terminal, and execution is serialized
 // on that terminal: a shared PTY cannot interleave two commands, and ordering
-// keeps output attribution unambiguous (DESIGN.md §4.3 point 1). Different
+// keeps output attribution unambiguous (DESIGN.md「TerminalPool」第 1 点). Different
 // assets use different terminals and run in parallel.
 //
 // Draining the previous command's residual output is the transport's job —
 // transport.Terminal.Execute drains before it sends, because only the backend
-// knows where its stream ended (DESIGN.md §4.3 point 3); the lock this pool
+// knows where its stream ended (DESIGN.md「TerminalPool」第 3 点); the lock this pool
 // holds is what makes that drain meaningful.
 //
 // A failure that happened before the command produced any output evicts the
 // terminal and replays the command once on a connection built from scratch. A
 // command that already emitted output is never replayed: the remote host has
-// seen it, and rm/reboot are not idempotent (DESIGN.md §4.3 point 5 and §4.7
-// point 3). Output that arrived before the failure is returned with the error.
+// seen it, and rm/reboot are not idempotent (DESIGN.md「TerminalPool」第 5 点、
+// 「端点故障转移」第 3 点). Output that arrived before the failure is returned with the error.
 func (p *TerminalPool) Exec(ctx context.Context, srv *config.ServerConfig, sess *auth.Session,
 	assetName string, cmd string, opts ExecOptions) (transport.Result, error) {
 	if p == nil {
@@ -467,7 +467,7 @@ func (p *TerminalPool) acquire(ctx context.Context, key termKey, srv *config.Ser
 // The connection token is created inside Connect, not here: the token is
 // backend-specific (SFTP needs protocol=sftp with connect_method=web_sftp) and
 // the auto backend needs a fresh token per attempt, so the transport owns it
-// (DESIGN.md §3.1, §3.3).
+// (DESIGN.md「KoKo 协议」的「认证」, 「SSH 后端」).
 func (p *TerminalPool) dial(ctx context.Context, srv *config.ServerConfig, sess *auth.Session,
 	assetName string, opts ExecOptions) (*pooledTerm, error) {
 	resolve := p.Resolve
@@ -692,7 +692,7 @@ func NewAssetCache() *AssetCache { return &AssetCache{entries: map[string]assetE
 //
 // Freshness is measured against the injected now, and an entry expires at
 // exactly ResolveTTL: answering a lookup the caller asked to re-check would
-// hide a renamed asset (DESIGN.md §4.4).
+// hide a renamed asset (DESIGN.md「冷/热路径」).
 func (c *AssetCache) Get(key string, now time.Time) (assets.Info, bool) {
 	if c == nil {
 		return assets.Info{}, false

@@ -19,7 +19,7 @@ import (
 // transparent-proxy tool like Clash exports it globally), the login went
 // through the proxy while the TCP probe, SSH, SFTP and WebSocket all
 // dialled directly. The probe and the login then measured different
-// networks, and the §4.7 failover policy acted on the wrong one.
+// networks, and the 「端点故障转移」 policy acted on the wrong one.
 func TestNewDoesNotInheritEnvironmentProxy(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")

@@ -58,7 +58,7 @@ func ConfigDir() (string, error) {
 // An empty path means DefaultPath. A missing file yields
 // ErrConfigNotFound, unless a pre-rewrite config.yaml is found next to it,
 // in which case ErrLegacyConfig is returned (the rewrite deliberately does
-// not import the legacy format; DESIGN.md §7.3).
+// not import the legacy format; DESIGN.md「配置与凭据分层」).
 func Load(path string) (*AppConfig, error) {
 	if strings.TrimSpace(path) == "" {
 		p, err := DefaultPath()

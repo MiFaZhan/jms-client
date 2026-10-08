@@ -12,7 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// tomlDoc mirrors the on-disk configuration file (DESIGN.md §7.2).
+// tomlDoc mirrors the on-disk configuration file (DESIGN.md「配置文件」).
 //
 // It exists so that field names and rendering order are explicit and
 // stable, and so the in-memory AppConfig stays free of encoding tags.
@@ -36,7 +36,7 @@ type tomlEntry struct {
 }
 
 // serversParentHeader is the table header the encoder emits above a map
-// of tables. It is stripped so the rendered file matches DESIGN.md §7.2,
+// of tables. It is stripped so the rendered file matches DESIGN.md「配置文件」,
 // which shows [servers.<alias>] tables directly under the root keys.
 const serversParentHeader = "[servers]\n"
 
@@ -50,7 +50,7 @@ func optionalPort(port int) *int {
 }
 
 // marshalConfig renders cfg as TOML in the shape documented in
-// DESIGN.md §7.2. Servers are emitted in alias order so the file is
+// DESIGN.md「配置文件」. Servers are emitted in alias order so the file is
 // stable and diff-friendly.
 func marshalConfig(cfg *AppConfig) ([]byte, error) {
 	if cfg == nil {
@@ -94,7 +94,7 @@ func marshalConfig(cfg *AppConfig) ([]byte, error) {
 
 	text := buf.String()
 	// The encoder emits a bare [servers] header before the sub-tables;
-	// DESIGN.md §7.2 shows only the [servers.<alias>] headers, so drop it.
+	// DESIGN.md「配置文件」 shows only the [servers.<alias>] headers, so drop it.
 	text = strings.Replace(text, serversParentHeader, "", 1)
 	return []byte(text), nil
 }
@@ -167,7 +167,7 @@ func parseConfig(path string, data []byte) (*AppConfig, error) {
 // CheckCredentialsRefused is a guard used by tests and by reviewers: it
 // reports an error when the rendered configuration contains any of the
 // forbidden credential markers. The configuration file must never carry
-// a secret, encrypted or not (DESIGN.md §7.4).
+// a secret, encrypted or not (DESIGN.md「威胁模型边界」).
 // credentialFieldRe matches a credential-bearing schema field at key
 // position. A bare substring match would raise a false alarm for a
 // legitimate alias or username that merely contains the word - the canary

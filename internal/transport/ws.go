@@ -26,13 +26,13 @@ import (
 // PathWSTerminal is the KoKo WebSocket terminal endpoint.
 //
 // /koko/ws/token/ returns 404 on some versions, so the terminal path is the
-// only one used (DESIGN.md §3.2).
+// only one used (DESIGN.md「WebSocket 终端」).
 const PathWSTerminal = "/koko/ws/terminal/"
 
 // WSSubprotocol is the subprotocol KoKo requires on the handshake.
 const WSSubprotocol = "JMS-KOKO"
 
-// wsConnectTimeout bounds the WebSocket handshake (DESIGN.md §4.5).
+// wsConnectTimeout bounds the WebSocket handshake (DESIGN.md「数值基线」).
 const wsConnectTimeout = DialTimeout
 
 // InteractiveReadTimeout is retained for compatibility with callers that
@@ -52,9 +52,9 @@ var wsDialer = dialWS
 // arrives as binary frames; input is text-frame JSON. Keepalive is an
 // application-level text-frame PING every Keepalive, because Nginx is a
 // transparent TCP tunnel and never delivers a WebSocket-level ping
-// (DESIGN.md §3.2).
+// (DESIGN.md「WebSocket 终端」).
 //
-// The endpoint is bound to the session (DESIGN.md §4.7 point 1): the host is
+// The endpoint is bound to the session (DESIGN.md「端点故障转移」第 1 点): the host is
 // parsed from sess.BaseURL, never re-resolved.
 func connectWS(ctx context.Context, sess *auth.Session, asset assets.Info, opts ConnectOptions) (Terminal, error) {
 	host := kokoHostPort(sess.BaseURL)
@@ -123,7 +123,7 @@ func dialWSOnce(ctx context.Context, sess *auth.Session, asset assets.Info,
 // gorilla's Proxy field unset means "direct", which is what jms wants by
 // default — but stating it makes the policy visible and, more
 // importantly, keeps the WebSocket on the same path as the REST login
-// that produced the session (DESIGN.md §6.1).
+// that produced the session (DESIGN.md「代理策略」).
 func dialWS(ctx context.Context, sess *auth.Session, wsURL string) (*websocket.Conn, *http.Response, error) {
 	header := http.Header{}
 	if sid := sess.SessionID(); sid != "" {
@@ -140,7 +140,7 @@ func dialWS(ctx context.Context, sess *auth.Session, wsURL string) (*websocket.C
 // wsTerminalURL builds the KoKo terminal URL.
 //
 // /koko/ws/token/ returns 404 on some versions, so the terminal path is the
-// only one used (DESIGN.md §3.2). The scheme follows the base URL: http →
+// only one used (DESIGN.md「WebSocket 终端」). The scheme follows the base URL: http →
 // ws, https → wss.
 func wsTerminalURL(baseURL, host, tokenID string) string {
 	scheme := "ws"
@@ -292,7 +292,7 @@ func truncateForError(payload []byte) string {
 // startKeepalive sends an application-level text-frame PING every interval.
 //
 // Nginx is a transparent TCP tunnel: a WebSocket-level ping never reaches
-// KoKo, so the heartbeat lives above the protocol (DESIGN.md §3.2). A server
+// KoKo, so the heartbeat lives above the protocol (DESIGN.md「WebSocket 终端」). A server
 // PING is answered with a PONG. The loop exits when Close closes done, or
 // when the connection dies — either way the next Execute reports the failure.
 func (t *wsTerminal) startKeepalive(interval time.Duration) {
@@ -326,7 +326,7 @@ func (t *wsTerminal) startKeepalive(interval time.Duration) {
 //
 // A non-zero remote exit is not an error — it is reported in Result.ExitCode.
 //
-// Warning (DESIGN.md §11.1): a command ending in `#` or `\`, or with
+// Warning (DESIGN.md「KoKo 协议」): a command ending in `#` or `\`, or with
 // unbalanced quotes or parentheses, swallows the appended rc-capture chain
 // and the marker never arrives. The timeout is the only defence — always
 // pass one for commands that are not known to terminate.
@@ -406,7 +406,7 @@ func (t *wsTerminal) readUntilMarkers(ctx context.Context, marker string, timeou
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			return Result{Output: extractBetween(stream.String(), marker)},
-				fmt.Errorf("websocket: command did not complete within %s — a command ending in '#' or '\\', or with unbalanced quotes, swallows the status marker (DESIGN.md §11.1)", timeout)
+				fmt.Errorf("websocket: command did not complete within %s — a command ending in '#' or '\\', or with unbalanced quotes, swallows the status marker", timeout)
 		}
 		_ = t.conn.SetReadDeadline(time.Now().Add(remaining))
 
@@ -420,7 +420,7 @@ func (t *wsTerminal) readUntilMarkers(ctx context.Context, marker string, timeou
 			// the overwhelmingly common cause.
 			if isTimeout(err) {
 				return Result{Output: extractBetween(stream.String(), marker)},
-					fmt.Errorf("websocket: command did not complete within %s — a command ending in '#' or '\\', or with unbalanced quotes, swallows the status marker (DESIGN.md §11.1)", timeout)
+					fmt.Errorf("websocket: command did not complete within %s — a command ending in '#' or '\\', or with unbalanced quotes, swallows the status marker", timeout)
 			}
 			return Result{Output: extractBetween(stream.String(), marker)},
 				fmt.Errorf("websocket read: %w", err)

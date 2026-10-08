@@ -24,10 +24,10 @@ func newMCPCommand(deps *Deps) *cobra.Command {
 		Long: `Run the MCP server over stdio, and host the local observation channel.
 
 Every tool call goes through this process's connection pool, so a second call
-for the same asset reuses the live session instead of logging in again
-(DESIGN.md §4, §5). The host also accepts ` + "`jms attach`" + ` clients, which then
+for the same asset reuses the live session instead of logging in again. The
+host also accepts ` + "`jms attach`" + ` clients, which then
 watch the same event stream and can run commands on the same pooled
-connections (§12.4).
+connections.
 
 Diagnostics go to stderr: stdout is the MCP protocol channel.`,
 		Args: cobra.NoArgs,
@@ -59,7 +59,7 @@ func (h *hostHandle) Close() error {
 
 // runMCP starts the IPC host and then serves the MCP protocol.
 //
-// The host is embedded in this process (DESIGN.md §12.4, the v1 shape), so an
+// The host is embedded in this process (DESIGN.md「IPC 宿主」, the v1 shape), so an
 // attach client sees this server's pool and events. A host that cannot listen
 // is a warning rather than a failure: observation is a convenience, and
 // refusing to serve MCP because a pipe is already taken would break the
@@ -115,7 +115,7 @@ func startHost(ctx context.Context, deps Deps) (*hostHandle, error) {
 // runHostExec runs one operator command through the shared pool.
 //
 // The pool serializes per terminal, so this and an AI tool call on the same
-// asset queue rather than interleave (DESIGN.md §12.4).
+// asset queue rather than interleave (DESIGN.md「IPC 宿主」).
 func runHostExec(ctx context.Context, deps Deps, req ipc.ExecRequest) ipc.ExecResult {
 	if deps.Runtime == nil || deps.Runtime.Exec == nil {
 		return ipc.ExecResult{Error: "no terminal pool is available in this process"}
@@ -173,7 +173,7 @@ func mcpOptions(deps Deps) mcpserver.Options {
 }
 
 // mcpActor names this process in the audit stream, so a reader of the log can
-// tell which client ran what (DESIGN.md §12.3).
+// tell which client ran what (DESIGN.md「审计日志」).
 func mcpActor() string {
 	if v := os.Getenv("JMS_ACTOR"); v != "" {
 		return v

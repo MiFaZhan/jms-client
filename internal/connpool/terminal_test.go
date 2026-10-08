@@ -333,7 +333,7 @@ func TestTerminalPoolRebuildsAfterConnectFailure(t *testing.T) {
 // TestTerminalPoolNeverReplaysACommandThatProducedOutput is the non-idempotency
 // safety line: once output has been observed the remote host has run the
 // command, so the pool must not send it again — `rm`/`reboot` are not
-// idempotent (DESIGN.md §4.3 point 5, §4.7 point 3).
+// idempotent (DESIGN.md「TerminalPool」第 5 点, 「端点故障转移」第 3 点).
 func TestTerminalPoolNeverReplaysACommandThatProducedOutput(t *testing.T) {
 	b := &fakeBackend{}
 	term := &fakeTerminal{}

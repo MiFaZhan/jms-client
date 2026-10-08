@@ -11,11 +11,11 @@ import (
 )
 
 // keyringService is the service name used for every credential entry
-// (DESIGN.md §7.1).
+// (DESIGN.md「凭据分层」).
 const keyringService = "jms-client"
 
 // envPrefixPassword and envPrefixOTP prefix the environment-variable
-// credential fallback (DESIGN.md §7.1).
+// credential fallback (DESIGN.md「凭据分层」).
 const (
 	envPrefixPassword = "JMS_PASSWORD_"
 	envPrefixOTP      = "JMS_OTP_"
@@ -56,7 +56,7 @@ func credentialSuffix(kind string) (string, bool) {
 // The conventional chain is Chain(NewEnvStore(), NewKeyringStore()):
 // environment variables win over the OS credential store, and because
 // the environment store is read-only a Set falls through to the keyring
-// (DESIGN.md §7.1).
+// (DESIGN.md「凭据分层」).
 func Chain(stores ...CredentialStore) CredentialStore {
 	return &chainStore{stores: stores}
 }
@@ -128,7 +128,7 @@ func (c *chainStore) Delete(alias string) error {
 // Service).
 //
 // service is "jms-client"; the account is "<alias>/password" or
-// "<alias>/otp_secret", matching DESIGN.md §7.1.
+// "<alias>/otp_secret", matching DESIGN.md「凭据分层」.
 func NewKeyringStore() CredentialStore {
 	return &keyringStore{}
 }
@@ -196,7 +196,7 @@ func (k *keyringStore) Delete(alias string) error {
 // variables, for headless Linux, CI and WSL.
 //
 // JMS_PASSWORD_<ALIAS> and JMS_OTP_<ALIAS>, with the alias uppercased and
-// every '-' replaced by '_' (DESIGN.md §7.1).
+// every '-' replaced by '_' (DESIGN.md「凭据分层」).
 func NewEnvStore() CredentialStore {
 	return &envStore{}
 }

@@ -24,7 +24,7 @@ type stateDoc struct {
 // FileStateStore persists State in a small JSON file.
 //
 // It is used so that a one-shot CLI invocation still benefits from the
-// last-good address without paying for a probe (DESIGN.md §4.7 item 5).
+// last-good address without paying for a probe (DESIGN.md「端点故障转移」第 5 点).
 // The file is written atomically with mode 0600 on Unix.
 type FileStateStore struct {
 	path string
@@ -153,7 +153,7 @@ func (m *MemoryStateStore) Set(server string, st State) error {
 }
 
 // BackendFor returns the remembered backend for a kind, or "" when none
-// is recorded (DESIGN.md §4.7 item 4).
+// is recorded (DESIGN.md「端点故障转移」第 4 点).
 func (s State) BackendFor(kind Kind) string {
 	if s.Backend == nil {
 		return ""

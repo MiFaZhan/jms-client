@@ -86,7 +86,7 @@ func executeArgsContext(ctx context.Context, args []string, deps Deps) int {
 
 // NewRootCommand builds the cobra command tree.
 //
-// The full DESIGN.md §6 command surface is registered and implemented. An
+// The full DESIGN.md「总体架构」 command surface is registered and implemented. An
 // unrecognised subcommand fails with an explicit error rather than printing
 // help and exiting 0, so a script chaining on one cannot mistake a typo for
 // success.

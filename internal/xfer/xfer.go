@@ -5,7 +5,7 @@
 // SFTP rides on its own connection token. The token must be created with
 // protocol="sftp" and connect_method="web_sftp": an ssh/web_cli token's SFTP
 // subsystem lands on the KoKo virtual root and every path fails with
-// "please select one of the assets" (DESIGN.md §3.1).
+// "please select one of the assets" (DESIGN.md「KoKo 协议」的「认证」).
 package xfer
 
 import (
@@ -45,7 +45,7 @@ const (
 )
 
 // sftpProtocol and sftpConnectMethod are the token pair SFTP requires
-// (DESIGN.md §3.1). They are constants rather than literals at the call
+// (DESIGN.md「KoKo 协议」的「认证」). They are constants rather than literals at the call
 // site because getting the pair wrong is the single failure mode this
 // package exists to avoid.
 const (
@@ -414,7 +414,7 @@ func dialKoKoSFTP(ctx context.Context, sess *auth.Session, asset assets.Info) (r
 }
 
 // dialSSH opens the KoKo SSH transport authenticated with a connection
-// token: username JMS-{token_id}, password token_value (DESIGN.md §3.3).
+// token: username JMS-{token_id}, password token_value (DESIGN.md「SSH 后端」).
 //
 // The host key is not pinned. KoKo presents an ephemeral key and the
 // Python implementation did not verify one either, so pinning would be a
@@ -453,7 +453,7 @@ func dialSSH(ctx context.Context, sess *auth.Session, token transport.Token) (*s
 
 // sessionHost extracts the host from the session's bound address.
 //
-// The endpoint is fixed for the session's lifetime (DESIGN.md §4.7), so
+// The endpoint is fixed for the session's lifetime (DESIGN.md「端点故障转移」), so
 // every KoKo connection derives from this one address.
 func sessionHost(sess *auth.Session) (string, error) {
 	if sess == nil || strings.TrimSpace(sess.BaseURL) == "" {
@@ -1232,7 +1232,7 @@ func bridgeCredentials(alias string) (auth.Credentials, error) {
 }
 
 // bridgeLogin authenticates against the server under the same failover
-// policy the rest of the CLI uses (DESIGN.md §4.7).
+// policy the rest of the CLI uses (DESIGN.md「端点故障转移」).
 func bridgeLogin(ctx context.Context, srv *config.ServerConfig, creds auth.Credentials) (*auth.Session, error) {
 	var session *auth.Session
 	login := func(ctx context.Context, cand endpoint.Candidate) error {

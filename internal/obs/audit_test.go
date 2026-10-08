@@ -530,7 +530,7 @@ func TestMarshalLineRoundTripPreservesEveryField(t *testing.T) {
 func TestMarshalLineCarriesTheErrorField(t *testing.T) {
 	// The error text is the record of a failed execution; it must survive the
 	// trip to disk. A credential must never be put in it in the first place
-	// (shared rules §7), which is why nothing here needs redacting.
+	// (shared rules 「配置与凭据分层」), which is why nothing here needs redacting.
 	line, err := MarshalLine(Event{Kind: KindError, Error: "dial tcp 10.0.0.5:2222: connection refused"})
 	if err != nil {
 		t.Fatalf("MarshalLine: %v", err)
@@ -784,7 +784,7 @@ func TestAuditFilesAreOwnerOnlyOnUnix(t *testing.T) {
 
 func TestAuditWriterTightensPreexistingPermissionsOnUnix(t *testing.T) {
 	// A directory or file left world-readable by an earlier run must not
-	// keep leaking output previews (DESIGN.md §11.7).
+	// keep leaking output previews (DESIGN.md「审计日志」).
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows governs access with ACLs, not file modes")
 	}

@@ -23,7 +23,7 @@ func endpointName(configDir string) string {
 }
 
 // pipeSDDL grants full control to the creating user and to the local
-// administrators, and nothing to anyone else (DESIGN.md §11.6).
+// administrators, and nothing to anyone else (DESIGN.md「IPC 宿主」).
 //
 // P protects the DACL so an inherited ACE from a parent object cannot widen
 // it; the owner SID is filled in at listen time.

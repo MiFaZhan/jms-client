@@ -8,7 +8,7 @@ import (
 // AuthError reports a rejected or expired credential (HTTP 401).
 //
 // The endpoint-selection policy treats AuthError as terminal: switching
-// to another address cannot fix a credential problem (DESIGN.md §4.7).
+// to another address cannot fix a credential problem (DESIGN.md「端点故障转移」).
 //
 // Body is a truncated copy of the response body and never contains
 // request headers, so a bearer token cannot leak through an error.

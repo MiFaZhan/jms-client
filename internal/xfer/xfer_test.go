@@ -86,7 +86,7 @@ func requireBytes(t *testing.T, what string, got, want []byte) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. the token rule that roots SFTP at the asset (DESIGN.md §3.1)
+// 1. the token rule that roots SFTP at the asset (DESIGN.md「KoKo 协议」的「认证」)
 // ---------------------------------------------------------------------------
 
 func TestSFTPTokenRequestUsesSFTPProtocol(t *testing.T) {

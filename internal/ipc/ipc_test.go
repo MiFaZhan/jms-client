@@ -518,7 +518,7 @@ func TestDialRejectsAnEmptyAddressAndNilClient(t *testing.T) {
 }
 
 // TestUnixSocketIsOwnerOnly is the Unix half of the security boundary: the
-// endpoint must not be readable by another user (DESIGN.md §11.6).
+// endpoint must not be readable by another user (DESIGN.md「IPC 宿主」).
 func TestUnixSocketIsOwnerOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the Windows endpoint is a named pipe with an owner-only ACL")
@@ -724,7 +724,7 @@ func TestKeepalivePingIsAnswered(t *testing.T) {
 	}
 }
 
-// TestFlatHelloIsAccepted covers the shape DESIGN.md §12.4 documents, where
+// TestFlatHelloIsAccepted covers the shape DESIGN.md「IPC 宿主」 documents, where
 // hello is the whole line rather than an envelope payload.
 func TestFlatHelloIsAccepted(t *testing.T) {
 	host, addr, publish := testHost(t, nil)
@@ -859,7 +859,7 @@ func (c *blockingConn) Close() error {
 }
 
 // TestCongestedClientIsDroppedNotWaitedFor is the backpressure rule
-// (DESIGN.md §11.8): a client that cannot keep up must never stall the
+// (DESIGN.md「可观测性」): a client that cannot keep up must never stall the
 // publishing path, and its dropped events are counted.
 func TestCongestedClientIsDroppedNotWaitedFor(t *testing.T) {
 	host := &Host{Endpoint: EndpointName(t.TempDir())}

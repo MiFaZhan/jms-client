@@ -110,13 +110,13 @@ func TestWSTimeoutOnMissingMarker(t *testing.T) {
 		t.Fatalf("Execute took %s, want it to honour the timeout", elapsed)
 	}
 	if !strings.Contains(err.Error(), "unbalanced quotes") {
-		t.Fatalf("error = %v, want it to reference the DESIGN §11.1 pitfall", err)
+		t.Fatalf("error = %v, want it to reference the swallowed-marker pitfall", err)
 	}
 }
 
 // TestWSKeepaliveSendsApplicationLevelPing pins the heartbeat: it must be an
 // application-level text frame, because a WebSocket-level ping never reaches
-// KoKo through Nginx (DESIGN.md §3.2).
+// KoKo through Nginx (DESIGN.md「WebSocket 终端」).
 func TestWSKeepaliveSendsApplicationLevelPing(t *testing.T) {
 	pingSeen := make(chan struct{}, 1)
 	f := newFakeKoKo(t)

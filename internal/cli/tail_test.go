@@ -123,7 +123,7 @@ func TestTailRendersEndpointAndPoolBadges(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
 	out := env.stdout()
-	// DESIGN.md §4.7 point 6 and §12.5 ask for these markers.
+	// DESIGN.md「端点故障转移」第 6 点 and 「IPC 宿主」 ask for these markers.
 	if !strings.Contains(out, "[外]") {
 		t.Errorf("output lacks the external endpoint badge:\n%s", out)
 	}
@@ -282,7 +282,7 @@ func TestAttachAssetFilterIsPassedToTheHost(t *testing.T) {
 	}
 }
 
-// TestAttachRoleIsObservationByDefault pins the DESIGN §12.5 safety property:
+// TestAttachRoleIsObservationByDefault pins the DESIGN.md「IPC 宿主」 safety property:
 // a plain attach, or a contradictory pair, never grants input.
 func TestAttachRoleIsObservationByDefault(t *testing.T) {
 	cases := []struct {
@@ -326,7 +326,7 @@ func TestMCPPrintConfigNamesTheCommandAndCarriesNoCredential(t *testing.T) {
 	if !strings.Contains(out, "jms") || !strings.Contains(out, "mcp") {
 		t.Errorf("--print-config does not name the command:\n%s", out)
 	}
-	// DESIGN §7.5: the entry is shareable, so it must carry nothing secret.
+	// DESIGN.md「MCP 客户端集成」: the entry is shareable, so it must carry nothing secret.
 	for _, forbidden := range []string{"password", "secret", "token", "otp"} {
 		if strings.Contains(strings.ToLower(out), forbidden) {
 			t.Errorf("--print-config contains %q:\n%s", forbidden, out)

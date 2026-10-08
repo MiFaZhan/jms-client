@@ -1,5 +1,5 @@
 // Package endpoint resolves which of a server's addresses to use and
-// performs the internal/external failover described in DESIGN.md §4.7.
+// performs the internal/external failover described in DESIGN.md「端点故障转移」.
 //
 // The policy in one paragraph: order the configured addresses (an
 // explicit force wins, then a recent last-good address, then the
@@ -39,7 +39,7 @@ const (
 	KindExternal Kind = config.KindExternal
 )
 
-// ProbeTimeout is the TCP dial timeout for a candidate (DESIGN.md §4.5).
+// ProbeTimeout is the TCP dial timeout for a candidate (DESIGN.md「数值基线」).
 // It is deliberately short: a DROP-style firewall would otherwise stall
 // for 75s.
 const ProbeTimeout = 1500 * time.Millisecond
@@ -131,7 +131,7 @@ func Candidates(srv *config.ServerConfig, force Kind, st State) []Candidate {
 
 	// A pinned server is restricted to one address by configuration, which is
 	// the user saying "I know which network I am on": no probing of the other,
-	// no failover (DESIGN.md §4.7 point 7, persisted).
+	// no failover (DESIGN.md「端点故障转移」第 7 点, persisted).
 	if pin := strings.TrimSpace(srv.Pin); pin != "" {
 		pinned := Kind(strings.ToLower(pin))
 		for _, cand := range all {
@@ -181,7 +181,7 @@ func Candidates(srv *config.ServerConfig, force Kind, st State) []Candidate {
 //
 // It dials DIRECTLY. When a proxy is configured, use ProbeWith instead,
 // or the probe and the login that follows it would measure two different
-// networks (DESIGN.md §6.1).
+// networks (DESIGN.md「代理策略」).
 func TCPProbe(ctx context.Context, rawURL string, timeout time.Duration) bool {
 	return dialProbe(ctx, rawURL, timeout, netproxy.Direct())
 }
@@ -190,7 +190,7 @@ func TCPProbe(ctx context.Context, rawURL string, timeout time.Duration) bool {
 // given proxy policy.
 //
 // A direct policy returns TCPProbe itself, so the default path is
-// unchanged. This is what keeps the §4.7 failover policy honest: the
+// unchanged. This is what keeps the 「端点故障转移」 policy honest: the
 // probe is an accelerator for the login, and it can only accelerate the
 // right thing if it travels the same route.
 func ProbeWith(px netproxy.Proxy) ProbeFunc {
@@ -253,7 +253,7 @@ func hostPort(rawURL string) (string, string, error) {
 //
 // On success the chosen address is recorded in st; a nil st is tolerated.
 // Authentication failures are returned immediately and never trigger
-// failover (DESIGN.md §4.7 point 2).
+// failover (DESIGN.md「端点故障转移」第 2 点).
 func SelectAndLogin(ctx context.Context, srv *config.ServerConfig, force Kind,
 	probe ProbeFunc, login LoginFunc, st StateStore) (Selection, error) {
 
@@ -316,7 +316,7 @@ func SelectAndLogin(ctx context.Context, srv *config.ServerConfig, force Kind,
 	}
 
 	// Every probe failed: the probe is an accelerator, not a verdict, so the
-	// first candidate gets one full login attempt (DESIGN.md §4.7, §11.9). A
+	// first candidate gets one full login attempt (DESIGN.md「端点故障转移」). A
 	// first candidate that was already login-attempted is not retried - its
 	// network-class failure is already recorded above, and a second identical
 	// attempt would only double the round-trips (and prompt for MFA twice).
@@ -349,7 +349,7 @@ func SelectAndLogin(ctx context.Context, srv *config.ServerConfig, force Kind,
 
 // terminalStatuses are the credential-rejection statuses: the server saw
 // the credential and refused it. Switching to another address cannot fix
-// them, so they are terminal for endpoint selection (DESIGN.md §4.7 pt 2).
+// them, so they are terminal for endpoint selection (DESIGN.md「端点故障转移」第 2 点).
 var terminalStatuses = map[int]bool{
 	http.StatusBadRequest:          true,
 	http.StatusUnauthorized:        true,
@@ -358,7 +358,7 @@ var terminalStatuses = map[int]bool{
 }
 
 // IsNetworkError reports whether err should trigger failover to the next
-// candidate (DESIGN.md §4.7 point 2, §11.9).
+// candidate (DESIGN.md「端点故障转移」第 2 点).
 //
 // Terminal - never a reason to try another address:
 //   - a credential rejection: *api.AuthError carrying a 400/401/403/422, and
@@ -368,7 +368,7 @@ var terminalStatuses = map[int]bool{
 //
 // Network-class - fail over: a transport failure (api.APIError with
 // StatusCode 0, i.e. TCP reachable but the service behind it broken - the
-// §11.9 VPN-half-connected case) and 5xx responses.
+// 「端点故障转移」 VPN-half-connected case) and 5xx responses.
 func IsNetworkError(err error) bool {
 	if err == nil {
 		return false

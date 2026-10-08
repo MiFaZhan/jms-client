@@ -2,7 +2,7 @@
 // parameters.
 //
 // Endpoints and selection rules mirror the Python reference implementation
-// (DESIGN.md §3, §3.1). The account-selection order in particular is not
+// (DESIGN.md「KoKo 协议」的「认证」). The account-selection order in particular is not
 // arbitrary: the connection-token API requires the account *alias*
 // (e.g. "@USER"), and the server rejects the display name.
 //

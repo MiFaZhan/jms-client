@@ -2,7 +2,7 @@
 //
 // It is the rewrite's core change: every tool call goes through the shared
 // connection pool instead of performing a full login/resolve/connect/
-// teardown cycle (DESIGN.md §5).
+// teardown cycle (DESIGN.md「总体架构」).
 package mcpserver
 
 import (
@@ -32,7 +32,7 @@ import (
 )
 
 // Tool names, kept identical to the Python implementation so existing
-// prompts and skills keep working (DESIGN.md §5).
+// prompts and skills keep working (DESIGN.md「总体架构」).
 const (
 	ToolLS           = "jms_ls"
 	ToolResolveAsset = "jms_resolve_asset"
@@ -146,7 +146,7 @@ type Options struct {
 	Session SessionFunc
 	// Probe checks address reachability during endpoint selection. Nil means
 	// endpoint.ProbeWith, which honours the server's configured proxy policy
-	// (DESIGN.md §6.1); a test can inject a fake to avoid real dials.
+	// (DESIGN.md「代理策略」); a test can inject a fake to avoid real dials.
 	Probe endpoint.ProbeFunc
 	// state reads the persisted last-good endpoint for a server alias.
 	// Nil means a file store next to the configuration file.
@@ -164,7 +164,7 @@ type Options struct {
 	// Stderr receives diagnostics. Nil means os.Stderr.
 	//
 	// It exists because stdio is the protocol channel: a log line on stdout
-	// would corrupt the JSON-RPC stream (DESIGN.md §8).
+	// would corrupt the JSON-RPC stream (DESIGN.md「技术栈」).
 	Stderr io.Writer
 }
 
@@ -231,7 +231,7 @@ func (nopWriteCloser) Close() error { return nil }
 
 // logger returns the SDK logger.
 //
-// Diagnostics always go to stderr: stdout carries the protocol (DESIGN §8).
+// Diagnostics always go to stderr: stdout carries the protocol (DESIGN.md「技术栈」).
 func (s *Server) logger() *slog.Logger {
 	w := s.opts.Stderr
 	if w == nil {
@@ -365,7 +365,7 @@ type transferOutcome struct {
 	err         error
 }
 
-// truncatePreview bounds a preview to the audit default (DESIGN.md §12.3).
+// truncatePreview bounds a preview to the audit default (DESIGN.md「审计日志」).
 func truncatePreview(s string) string {
 	if len(s) <= obs.DefaultPreviewBytes {
 		return s
@@ -402,15 +402,15 @@ func (s *Server) sessionFor(ctx context.Context, serverName, configPath string) 
 	}
 
 	// Endpoint selection follows the same failover policy as the CLI
-	// (DESIGN.md §4.7): try the last-good address first, then the configured
+	// (DESIGN.md「端点故障转移」): try the last-good address first, then the configured
 	// preference, probing each with a short TCP dial. MCP lives in one
 	// process for many calls, so the recorded last-good address would drift
 	// from the CLI's without this - an internal address that answers 502
 	// would otherwise be retried forever just because config.toml prefers it.
 	//
-	// The probe and the login below share one proxy policy (DESIGN.md §6.1).
+	// The probe and the login below share one proxy policy (DESIGN.md「代理策略」).
 	// Probing directly while logging in through a proxy would let the two
-	// observe different networks, and §4.7's failover would then act on the
+	// observe different networks, and 「端点故障转移」 would then act on the
 	// wrong one.
 	px, err := netproxy.Parse(cfg.ProxyFor(srv))
 	if err != nil {
@@ -442,7 +442,7 @@ func (s *Server) sessionFor(ctx context.Context, serverName, configPath string) 
 		if probe != nil && !probe(ctx, cand.URL, endpoint.ProbeTimeout) {
 			// The probe is an accelerator, not a verdict: remember that this
 			// candidate was skipped so the last one still gets a full login
-			// attempt (§4.7, §11.9).
+			// attempt (「端点故障转移」).
 			loginErr = fmt.Errorf("probe failed for %s address %s", cand.Kind, cand.URL)
 			continue
 		}
@@ -479,7 +479,7 @@ func (s *Server) state(server string) endpoint.StateStore {
 //
 // The returned error names the alias and the environment variable to set,
 // but never a credential value: a password must not reach an error string,
-// a log line or the audit stream (shared rules, DESIGN.md §7.1).
+// a log line or the audit stream (shared rules, DESIGN.md「凭据分层」).
 func (s *Server) credentials(alias string) (auth.Credentials, error) {
 	store := s.opts.Creds
 	if store == nil {
@@ -1002,7 +1002,7 @@ func (s *Server) transfer(ctx context.Context, req TransferRequest) (xfer.Result
 // defaultTransfer builds an xfer engine per call.
 //
 // A transfer is short-lived by design: SFTP connections are not pooled, so
-// the connection lives only for the transfer (DESIGN.md §5).
+// the connection lives only for the transfer (DESIGN.md「总体架构」).
 //
 // Asset names (req.Asset / req.Relay.SrcAsset / DstAsset) reach the engine
 // as AssetName so each side resolves on demand; the relay needs this per
@@ -1064,7 +1064,7 @@ type configListArgs struct {
 // configListTool lists the configured servers.
 //
 // It reads the file directly and never touches the pool: introspection must
-// work before any server is reachable (DESIGN.md §5).
+// work before any server is reachable (DESIGN.md「总体架构」).
 func (s *Server) configListTool() (*mcp.Tool, mcp.ToolHandler) {
 	tool := &mcp.Tool{
 		Name:        ToolConfigList,
@@ -1089,7 +1089,7 @@ func (s *Server) configListTool() (*mcp.Tool, mcp.ToolHandler) {
 // renderConfigList renders one server per line, default marked with '*'.
 //
 // It renders addresses and usernames only. A credential never appears here,
-// which is the whole point of DESIGN.md §7.1.
+// which is the whole point of DESIGN.md「凭据分层」.
 func renderConfigList(cfg *config.AppConfig) string {
 	if cfg == nil || len(cfg.Servers) == 0 {
 		return "No servers configured."
@@ -1114,7 +1114,7 @@ func renderConfigList(cfg *config.AppConfig) string {
 
 // poolStatusTool reports the pool's current shape.
 //
-// It is registered only under JMS_MCP_DEBUG=1 (DESIGN.md §5): the tool
+// It is registered only under JMS_MCP_DEBUG=1 (DESIGN.md「总体架构」): the tool
 // surface the AI sees stays the production tools by default.
 func (s *Server) poolStatusTool() (*mcp.Tool, mcp.ToolHandler) {
 	tool := &mcp.Tool{
@@ -1136,7 +1136,7 @@ func (s *Server) poolStatusTool() (*mcp.Tool, mcp.ToolHandler) {
 // `jms mcp --print-config`.
 //
 // The snippet carries no credential: the MCP entry is just the command, and
-// credentials live in the OS credential store (DESIGN.md §7.5). That is
+// credentials live in the OS credential store (DESIGN.md「MCP 客户端集成」). That is
 // what makes the entry safe to sync through a client manager.
 func PrintConfig() string {
 	return `{

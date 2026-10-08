@@ -3,7 +3,7 @@
 //
 // It exists because MCP stdio is a private channel between the AI client and
 // jms: without it there is no independent, real-time, inspectable view of
-// what the AI executed (DESIGN.md §12.1).
+// what the AI executed (DESIGN.md「可观测性」).
 package obs
 
 import (
@@ -23,7 +23,7 @@ import (
 	"github.com/MiFaZhan/jms-client/internal/config"
 )
 
-// Kind enumerates the audit event types (DESIGN.md §12.3).
+// Kind enumerates the audit event types (DESIGN.md「审计日志」).
 type Kind string
 
 // Event kinds.
@@ -40,7 +40,7 @@ const (
 	KindError          Kind = "error"
 )
 
-// Environment switches (DESIGN.md §12.3).
+// Environment switches (DESIGN.md「审计日志」).
 const (
 	// EnvAudit disables auditing when set to "off".
 	EnvAudit = "JMS_AUDIT"
@@ -59,7 +59,7 @@ const (
 	// DefaultPreviewBytes truncates a captured output preview.
 	DefaultPreviewBytes = 4096
 	// subscriberBuffer is how many events a subscriber may fall behind
-	// before its deliveries are dropped (DESIGN.md §11.8).
+	// before its deliveries are dropped (DESIGN.md「可观测性」).
 	subscriberBuffer = 64
 )
 
@@ -85,7 +85,7 @@ type Event struct {
 }
 
 // Subscriber receives events. A slow subscriber must never block the
-// publisher (DESIGN.md §11.8).
+// publisher (DESIGN.md「可观测性」).
 type Subscriber interface {
 	// Publish delivers one event. It must not block indefinitely.
 	Publish(Event)
@@ -302,7 +302,7 @@ func (b *Bus) Dropped() int64 {
 // AuditWriter appends events as JSONL, one file per process.
 //
 // Per-pid files avoid the Windows lock contention of several MCP instances
-// appending to one file (DESIGN.md §12.3).
+// appending to one file (DESIGN.md「审计日志」).
 type AuditWriter struct {
 	mu           sync.Mutex
 	dir          string
@@ -337,7 +337,7 @@ func NewAuditWriter(opts AuditOptions) (*AuditWriter, error) {
 	}
 	// MkdirAll keeps the mode of a directory that already exists, so an
 	// audit directory created by an earlier run (or by hand) would stay
-	// world-readable and leak output previews (DESIGN.md §11.7).
+	// world-readable and leak output previews (DESIGN.md「审计日志」).
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("restrict audit directory %s: %w", dir, err)
 	}
@@ -414,7 +414,7 @@ func (w *AuditWriter) Publish(e Event) {
 	// The write is unbuffered, so `jms tail` already sees the line. The sync
 	// is for durability: an audit record for an executed command must not
 	// vanish in a crash, which is the whole point of the log (DESIGN.md
-	// §12.3). Exec events are low-frequency, so the cost is not on a hot path.
+	// 「审计日志」). Exec events are low-frequency, so the cost is not on a hot path.
 	if err := w.file.Sync(); err != nil {
 		w.err = fmt.Errorf("flush audit file %s: %w", w.path, err)
 		return
@@ -513,7 +513,7 @@ func MarshalLine(e Event) ([]byte, error) {
 // sequence.
 //
 // The preview is JSON on disk: a half rune would be encoded as U+FFFD, which
-// silently corrupts the bytes a reader is trying to inspect (DESIGN.md §11.7).
+// silently corrupts the bytes a reader is trying to inspect (DESIGN.md「审计日志」).
 func truncatePreview(s string, max int) string {
 	if max <= 0 || len(s) <= max {
 		return s

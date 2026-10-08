@@ -38,13 +38,13 @@ const keepaliveMissesTolerated = 3
 // auto-backend fallback order.
 //
 // KoKo's SSH service authenticates with the connection token: the username
-// is "JMS-{token_id}" and the password is token_value (DESIGN.md §3.3).
+// is "JMS-{token_id}" and the password is token_value (DESIGN.md「SSH 后端」).
 // Every command then runs on its own session channel, which is what gives a
 // native exit code and removes the marker-parsing problem the WebSocket
 // backend has.
 //
 // The host is parsed from sess.BaseURL and never re-resolved: the endpoint
-// is bound to the session (DESIGN.md §4.7 point 1). Per DESIGN.md §3.3 one
+// is bound to the session (DESIGN.md「端点故障转移」第 1 点). Per DESIGN.md「SSH 后端」, one
 // retry with a fresh token is made, because a stale token is the most
 // common cause of an auth failure.
 func connectSSH(ctx context.Context, sess *auth.Session, asset assets.Info, opts ConnectOptions) (Terminal, error) {
@@ -58,7 +58,7 @@ func connectSSH(ctx context.Context, sess *auth.Session, asset assets.Info, opts
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 
-	// One attempt, not two. DESIGN.md §3.3 asks for a retry on a stale token,
+	// One attempt, not two. DESIGN.md「SSH 后端」 asks for a retry on a stale token,
 	// but a token is created fresh for this dial, so the only failure the
 	// retry could absorb is a transient network fault — and paying a second
 	// handshake timeout on every blocked port costs the auto-backend path
@@ -101,10 +101,10 @@ func dialSSH(ctx context.Context, sess *auth.Session, asset assets.Info, opts Co
 	}
 
 	// DialContext instead of ssh.Dial so the 15s connect bound (a DROP-type
-	// firewall would otherwise hang for 75s, DESIGN.md §4.5) coexists with
+	// firewall would otherwise hang for 75s, DESIGN.md「数值基线」) coexists with
 	// ctx cancellation. The dialer carries the session's proxy policy so the
 	// KoKo SSH port is reached on the same network path as the login that
-	// produced the session (DESIGN.md §6.1).
+	// produced the session (DESIGN.md「代理策略」).
 	dial := sess.NetProxy().DialContext(DialTimeout)
 	conn, err := dial(ctx, "tcp", addr)
 	if err != nil {
@@ -176,7 +176,7 @@ type sshTerminal struct {
 func (t *sshTerminal) Backend() BackendType { return BackendSSH }
 
 // startKeepalive sends an OpenSSH keepalive request every interval so idle
-// links survive middleboxes (DESIGN.md §3.3, §4.5). The Python reference
+// links survive middleboxes (DESIGN.md「SSH 后端」, 「数值基线」). The Python reference
 // uses paramiko's transport-level keepalive; x/crypto/ssh has no built-in
 // equivalent, so a goroutine sending a global request is the Go stand-in.
 // Failures are tolerated for keepaliveMissesTolerated consecutive ticks;

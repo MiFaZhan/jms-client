@@ -131,7 +131,7 @@ func TestProbeStaysDirectWithoutProxy(t *testing.T) {
 	if err := env.creds.Set("bastion", config.CredPassword, "pw"); err != nil {
 		t.Fatalf("seed credential: %v", err)
 	}
-	// The probe fails on a closed port, and the §4.7 fallback then spends a
+	// The probe fails on a closed port, and the 「端点故障转移」 fallback then spends a
 	// full login on the same candidate, so the login seam has to fail too.
 	env.loginErr = errors.New("dial tcp 127.0.0.1:1: connect: connection refused")
 
@@ -208,7 +208,7 @@ func TestInvalidProxyInConfigIsReported(t *testing.T) {
 }
 
 // TestSelectEndpointUsesProxyForProbeAndLogin asserts the two halves of
-// endpoint selection agree on one policy, which is the property §4.7
+// endpoint selection agree on one policy, which is the property 「端点故障转移」
 // depends on.
 func TestSelectEndpointUsesProxyForProbeAndLogin(t *testing.T) {
 	proxy := startRecordingProxy(t)

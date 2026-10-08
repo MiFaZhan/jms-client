@@ -22,7 +22,7 @@ type loginOptions struct {
 
 // newLoginCommand builds `jms login <target>`, the interactive PTY.
 //
-// The interactive terminal is deliberately not pooled (DESIGN.md §6): the
+// The interactive terminal is deliberately not pooled (DESIGN.md「总体架构」): the
 // process lifetime is the session lifetime, so there is nothing to reuse.
 func newLoginCommand(deps *Deps) *cobra.Command {
 	var opts loginOptions

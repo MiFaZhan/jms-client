@@ -1,7 +1,7 @@
 // Package transport opens KoKo terminal sessions against a resolved asset.
 //
 // Two backends exist and both authenticate with a connection token rather
-// than the user's password (DESIGN.md §3.1):
+// than the user's password (DESIGN.md「KoKo 协议」的「认证」):
 //
 //   - SSH: connect to the KoKo port (default 2222) as JMS-{token_id} with
 //     token_value as the password. Each command runs on its own channel, so
@@ -12,7 +12,7 @@
 //
 // BackendAuto tries SSH first and falls back to WebSocket, because an
 // external endpoint often permits the WebSocket path while the KoKo SSH
-// port is blocked (DESIGN.md §4.7 point 4).
+// port is blocked (DESIGN.md「端点故障转移」第 4 点).
 package transport
 
 import (
@@ -34,7 +34,7 @@ const (
 	BackendAuto BackendType = "auto"
 )
 
-// Numeric defaults from DESIGN.md §4.5.
+// Numeric defaults from DESIGN.md「数值基线」
 const (
 	// DefaultSSHPort is the KoKo SSH port.
 	DefaultSSHPort = 2222
@@ -100,7 +100,7 @@ type Terminal interface {
 // Connect opens a terminal for asset on sess, using the backend selected by
 // opts.
 //
-// The endpoint is already bound to sess (DESIGN.md §4.7 point 1): the KoKo
+// The endpoint is already bound to sess (DESIGN.md「端点故障转移」第 1 点): the KoKo
 // address is derived from sess.BaseURL and opts.SSHPort, never re-resolved
 // here.
 func Connect(ctx context.Context, sess *auth.Session, asset assets.Info, opts ConnectOptions) (Terminal, error) {

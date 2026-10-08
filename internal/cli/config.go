@@ -173,7 +173,7 @@ func runConfigAdd(cmd *cobra.Command, deps Deps, alias string, setDefault bool) 
 	ctx := commandContext(cmd)
 	// The configuration is loaded before validation because the proxy policy
 	// it carries decides which network the credential check travels
-	// (DESIGN.md §6.1). A missing file is an empty configuration, which is
+	// (DESIGN.md「代理策略」). A missing file is an empty configuration, which is
 	// the direct policy.
 	cfg, err := loadOrNewConfig(cmd, deps)
 	if err != nil {
@@ -234,7 +234,7 @@ func runConfigAdd(cmd *cobra.Command, deps Deps, alias string, setDefault bool) 
 // comes from.
 //
 // The credential source matters as much as the metadata: an alias whose
-// password is missing fails at login time, and DESIGN.md §7.3 requires
+// password is missing fails at login time, and DESIGN.md「配置与凭据分层」 requires
 // that to be a visible warning rather than a blank cell.
 func runConfigList(cmd *cobra.Command, deps Deps) error {
 	cfg, err := loadConfigFor(cmd, deps)
@@ -376,7 +376,7 @@ func runConfigTest(cmd *cobra.Command, deps Deps, alias string) error {
 
 	// The probe follows the server's proxy policy, and so does the login
 	// below: this command exists to report which address actually works, so
-	// both halves have to measure the same network (DESIGN.md §6.1).
+	// both halves have to measure the same network (DESIGN.md「代理策略」).
 	px, err := netproxy.Parse(cfg.ProxyFor(srv))
 	if err != nil {
 		return fmt.Errorf("server %q: %w", srv.Name, err)
@@ -424,7 +424,7 @@ func runConfigTest(cmd *cobra.Command, deps Deps, alias string) error {
 	// Every reachable endpoint gets a login attempt, not just the first: the
 	// command's whole purpose is telling the user which address actually
 	// works, and a probe alone cannot — a VPN or proxy can accept the TCP
-	// connection while nothing useful sits behind it (DESIGN.md §11.9).
+	// connection while nothing useful sits behind it (DESIGN.md「端点故障转移」).
 	var loginErr error
 	for i := range probes {
 		if !probes[i].reachable {

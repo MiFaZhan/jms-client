@@ -29,7 +29,7 @@ import (
 	"github.com/MiFaZhan/jms-client/internal/netproxy"
 )
 
-// DefaultTimeout is the per-request HTTP timeout (DESIGN.md §4.5).
+// DefaultTimeout is the per-request HTTP timeout (DESIGN.md「数值基线」).
 const DefaultTimeout = 15 * time.Second
 
 // DefaultPageSize is the page size used by GetAll.
@@ -40,7 +40,7 @@ const DefaultPageSize = 100
 const maxErrorBody = 200
 
 // Retry tuning: 3 retries with 0.5s/1s/2s backoff on transport errors
-// and on 502/503/504 (DESIGN.md §4.5). Every method is retried, POST
+// and on 502/503/504 (DESIGN.md「数值基线」). Every method is retried, POST
 // included, matching the Python client's urllib3 policy.
 const (
 	maxRetries  = 3
@@ -101,7 +101,7 @@ type Client struct {
 //
 // The transport is set EXPLICITLY, with Proxy == nil, so the client does
 // not inherit http.DefaultTransport and therefore never reads
-// HTTP_PROXY/HTTPS_PROXY (DESIGN.md §6.1). Leaving the field unset used
+// HTTP_PROXY/HTTPS_PROXY (DESIGN.md「代理策略」). Leaving the field unset used
 // to make the REST calls honour the environment while every other
 // transport (probe, SSH, SFTP, WebSocket) connected directly — probe and
 // login then measured different networks.

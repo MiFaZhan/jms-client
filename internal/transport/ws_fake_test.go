@@ -22,7 +22,7 @@ import (
 // the connection-token endpoint and the WebSocket terminal upgrade.
 //
 // It upgrades only when the jms_sessionid cookie and the JMS-KOKO
-// subprotocol are present — the two handshake requirements DESIGN.md §3.2
+// subprotocol are present — the two handshake requirements DESIGN.md「WebSocket 终端」
 // states — records every frame it receives, answers a client PING with a
 // PONG, and lets a test script frames to send.
 type fakeKoKo struct {

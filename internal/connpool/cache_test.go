@@ -31,7 +31,7 @@ func TestAssetCacheHitsBeforeTTLAndMissesAtTTL(t *testing.T) {
 
 // TestAssetCacheIsKeyedPerServer proves the key includes the server alias: the
 // same asset name on two JumpServers is two different resolutions
-// (DESIGN.md §4.4).
+// (DESIGN.md「冷/热路径」).
 func TestAssetCacheIsKeyedPerServer(t *testing.T) {
 	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	c := NewAssetCache()
@@ -58,7 +58,7 @@ func TestAssetCacheUnknownKeyMisses(t *testing.T) {
 }
 
 // TestAssetCacheInvalidateForcesMiss is the "config add/remove/set-default
-// takes effect immediately" half of DESIGN.md §4.4.
+// takes effect immediately" half of DESIGN.md「冷/热路径」.
 func TestAssetCacheInvalidateForcesMiss(t *testing.T) {
 	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	c := NewAssetCache()

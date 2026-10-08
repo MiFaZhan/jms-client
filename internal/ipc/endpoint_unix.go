@@ -17,7 +17,7 @@ import (
 // endpointName renders the Unix domain-socket path.
 //
 // The socket lives under the configuration directory so its 0600 mode and its
-// parent's 0700 mode together make it owner-only (DESIGN.md §11.6).
+// parent's 0700 mode together make it owner-only (DESIGN.md「IPC 宿主」).
 func endpointName(configDir string) string {
 	return filepath.Join(endpointDir(configDir), endpointPrefix+endpointHash(configDir)+".sock")
 }

@@ -1,6 +1,6 @@
 // Package config manages jms metadata (TOML) and credential storage.
 //
-// Design contract (DESIGN.md §7): the configuration file holds metadata
+// Design contract (DESIGN.md「配置与凭据分层」): the configuration file holds metadata
 // only — alias, internal/external URL, username, prefer, ssh_port. It
 // never holds a password or a TOTP secret; those live in the OS
 // credential store (see credentials.go). The file is therefore safe to
@@ -65,7 +65,7 @@ var (
 
 	// ErrLegacyConfig is returned when a pre-rewrite jms-cli config.yaml
 	// is detected. The rewrite deliberately does not import it
-	// (DESIGN.md §7.3).
+	// (DESIGN.md「配置与凭据分层」).
 	ErrLegacyConfig = errors.New("detected legacy jms-cli config")
 )
 
@@ -206,7 +206,7 @@ func IsProxyOff(raw string) bool {
 }
 
 // validateProxy checks a proxy URL without importing internal/netproxy:
-// config is a leaf package (DESIGN.md §1 dependency direction) and must
+// config is a leaf package (DESIGN.md「总体架构」 dependency direction) and must
 // not depend on the network layer. The accepted grammar is kept in sync
 // with netproxy.Parse by a test that asserts the two agree.
 //
@@ -236,7 +236,7 @@ func validateProxy(raw string) error {
 
 // validateURL accepts only absolute http(s) URLs with a host. A bare
 // "host:port" is rejected: the scheme must be explicit, because the
-// internal/external choice drives the failover policy (DESIGN.md §4.7)
+// internal/external choice drives the failover policy (DESIGN.md「端点故障转移」)
 // and must not be guessed.
 func validateURL(kind, raw string) error {
 	u, err := url.Parse(raw)
@@ -261,7 +261,7 @@ type AppConfig struct {
 	Default string
 	// Proxy is the global proxy policy: empty (or "direct") means every
 	// connection is made directly, which is the default and never consults
-	// HTTP_PROXY/HTTPS_PROXY (DESIGN.md §6.1).
+	// HTTP_PROXY/HTTPS_PROXY (DESIGN.md「代理策略」).
 	Proxy   string
 	Servers map[string]*ServerConfig
 }

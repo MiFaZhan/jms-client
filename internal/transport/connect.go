@@ -46,7 +46,7 @@ var errNotImplemented = errors.New("not implemented")
 // The account must be the account ALIAS (e.g. "@USER"), not the display
 // name, and SFTP must pass protocol="sftp" with connect_method="web_sftp":
 // an ssh/web_cli token's SFTP subsystem lands on the KoKo virtual root and
-// fails with "please select one of the assets" (DESIGN.md §3.1).
+// fails with "please select one of the assets" (DESIGN.md「KoKo 协议」的「认证」).
 func newConnectionToken(ctx context.Context, sess *auth.Session, asset assets.Info, protocol, connectMethod string) (Token, error) {
 	if protocol == "" {
 		protocol = "ssh"
@@ -100,13 +100,13 @@ func normalizeBackend(b BackendType) BackendType {
 	return b
 }
 
-// autoSequence is the backend order BackendAuto tries (DESIGN.md §3.3).
+// autoSequence is the backend order BackendAuto tries (DESIGN.md「SSH 后端」).
 var autoSequence = []BackendType{BackendSSH, BackendWS}
 
 // connectAuto tries each backend in order and returns the first success.
 //
 // A failure to connect is retried once with a fresh token per backend
-// (DESIGN.md §3.3), which is why each attempt creates its own token.
+// (DESIGN.md「SSH 后端」), which is why each attempt creates its own token.
 func connectAuto(ctx context.Context, sess *auth.Session, asset assets.Info, opts ConnectOptions) (Terminal, error) {
 	var failures []string
 	for _, backend := range autoSequence {

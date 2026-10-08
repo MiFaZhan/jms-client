@@ -61,7 +61,7 @@ type lsOptions struct {
 //
 // The endpoint resolution and the listing share one session: the address
 // the login actually used is the address the API calls go to, which is
-// what DESIGN.md §4.7 means by binding the endpoint to the session.
+// what DESIGN.md「端点故障转移」 means by binding the endpoint to the session.
 func runLS(cmd *cobra.Command, deps Deps, opts lsOptions) error {
 	force, err := parseEndpointKind(opts.endpoint)
 	if err != nil {

@@ -15,7 +15,7 @@ import (
 )
 
 // stdinOnlyTerminal is true here: a redirected stdout must not disable raw
-// mode (DESIGN.md §11.5).
+// mode (DESIGN.md「交互式终端」).
 const stdinOnlyTerminal = true
 
 // resizePoll is how often the Windows console size is sampled. The console

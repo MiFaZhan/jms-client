@@ -376,7 +376,7 @@ func TestIsTerminalOnAPipeIsFalse(t *testing.T) {
 
 // TestIsTerminalIsStdinOnlyOnWindows pins the platform split: on Windows only
 // stdin may report true, because a redirected stdout must not disable raw
-// mode (DESIGN.md §11.5).
+// mode (DESIGN.md「交互式终端」).
 func TestIsTerminalIsStdinOnlyOnWindows(t *testing.T) {
 	if !stdinOnlyTerminal {
 		t.Skip("this platform treats each descriptor independently")

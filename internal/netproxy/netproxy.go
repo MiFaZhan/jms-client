@@ -1,7 +1,7 @@
 // Package netproxy resolves how jms reaches the network: directly, or
 // through an explicit HTTP CONNECT / SOCKS5 proxy.
 //
-// Design contract (DESIGN.md §6.1): jms defaults to a DIRECT connection
+// Design contract (DESIGN.md「代理策略」): jms defaults to a DIRECT connection
 // and never consults HTTP_PROXY / HTTPS_PROXY / NO_PROXY. The
 // environment-variable convention is the wrong default for a bastion
 // client: a developer machine running a transparent-proxy tool (Clash,
@@ -15,7 +15,7 @@
 // only the REST client used to inherit http.DefaultTransport, the TCP
 // probe dialled directly while the login went through the proxy. Probe
 // and login measured two different networks, so the failover policy in
-// §6 reasoned about the wrong one. Every transport now shares one
+// 「总体架构」 reasoned about the wrong one. Every transport now shares one
 // policy, resolved here.
 //
 // Dependency direction: netproxy depends on nothing else in this module,
@@ -200,7 +200,7 @@ func (p Proxy) proxyAddr() string {
 //
 // The handshake is bounded by the caller's timeout: a proxy that accepts
 // the TCP connection and then stalls must not hang the caller, which is
-// the same DROP-firewall concern DESIGN.md §4.5 raises for direct dials.
+// the same DROP-firewall concern DESIGN.md「数值基线」 raises for direct dials.
 func (p Proxy) httpConnectDialContext(base *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	target := p.proxyAddr()
 	return func(ctx context.Context, network, hostport string) (net.Conn, error) {

@@ -156,7 +156,7 @@ func parseTransferTask(src, dst string) (parsedTransfer, error) {
 // runSFTP parses both sides, resolves the remote one and hands the task to
 // the Runtime.Transfer seam, which owns the SFTP engine.
 //
-// Verification is on by default (DESIGN.md §7.2 of the reference CLI):
+// Verification is on by default (DESIGN.md「配置文件」 of the reference CLI):
 // --no-verify turns it off; the redundant --verify flag is accepted for
 // symmetry with --no-verify and changes nothing.
 func runSFTP(cmd *cobra.Command, deps Deps, src, dst string, opts sftpOptions) error {

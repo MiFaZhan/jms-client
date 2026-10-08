@@ -29,7 +29,7 @@ func newSSHPipeCommand(deps *Deps) *cobra.Command {
 // exit code through exitError.
 //
 // It writes nothing of its own to stdout: rsync speaks its protocol there,
-// and one stray diagnostic line would corrupt the transfer (DESIGN.md §6,
+// and one stray diagnostic line would corrupt the transfer (DESIGN.md「总体架构」,
 // ssh-pipe bridge rule). The bridge itself reports its failures on stderr.
 func runSSHPipe(cmd *cobra.Command, deps Deps, args []string) error {
 	ctx := commandContext(cmd)

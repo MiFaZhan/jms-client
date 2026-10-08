@@ -2,14 +2,14 @@
 // `jms attach`.
 //
 // Transport is a Windows named pipe or a Unix domain socket, owner-only, and
-// it never listens on a network port (DESIGN.md §12.4).
+// it never listens on a network port (DESIGN.md「IPC 宿主」).
 //
 // The wire protocol is JSON-Lines: the client opens with `hello{role,
 // asset_filter?, last?}`, the host pushes `event`, an `operator` may send
 // `exec{...}` and receives `exec.result`, and `ping`/`pong` keep the channel
 // alive. Arbitration between a human command and an AI command happens at the
 // Exec seam, which shares the terminal pool's per-terminal mutex, so the two
-// callers serialize on one connection instead of racing for it (§12.4).
+// callers serialize on one connection instead of racing for it (「IPC 宿主」).
 package ipc
 
 import (
@@ -57,13 +57,13 @@ const (
 	// execTimeout bounds an operator command whose request carries no
 	// deadline, so a wedged host cannot strand the attached client.
 	execTimeout = 5 * time.Minute
-	// socketFileMode is the Unix socket's permission: owner-only (§11.6).
+	// socketFileMode is the Unix socket's permission: owner-only (「IPC 宿主」).
 	socketFileMode = 0o600
 	// hostRingSize bounds the host's replay buffer behind `--last`.
 	hostRingSize = 512
 	// clientQueue is how many events one client may have in flight. A client
 	// that falls further behind is dropped rather than allowed to stall the
-	// host (§11.8).
+	// host (「可观测性」).
 	clientQueue = 256
 	// maxLineBytes bounds one wire message. A longer line ends that client's
 	// session instead of growing the host's memory.
@@ -100,7 +100,7 @@ type ExecRequest struct {
 //
 // Busy reports that another command (an AI tool call or a second operator)
 // currently holds the terminal: the host refuses rather than queueing
-// unboundedly (§12.4).
+// unboundedly (「IPC 宿主」).
 type ExecResult struct {
 	Output   string `json:"output"`
 	ExitCode int    `json:"exit_code"`
@@ -119,7 +119,7 @@ type execWire struct {
 // Host is the server side of the channel, embedded in the jms mcp process.
 type Host struct {
 	// Subscribe receives bus events to broadcast. It must not block the
-	// caller: a congested client is dropped, never waited for (§11.8).
+	// caller: a congested client is dropped, never waited for (「可观测性」).
 	Subscribe func(sink func(event json.RawMessage))
 	// Exec runs an operator command through the shared pool.
 	Exec func(ctx context.Context, req ExecRequest) ExecResult
@@ -236,7 +236,7 @@ func (h *Host) close() {
 // attached clients.
 //
 // Every event is recorded in the host ring first, so a client that attaches
-// later can still replay it with `--last` (DESIGN.md §12.5).
+// later can still replay it with `--last` (DESIGN.md「IPC 宿主」).
 func (h *Host) subscribeBus() func() {
 	var mu sync.Mutex
 	subscribed := true
@@ -389,7 +389,7 @@ type client struct {
 
 	writeMu sync.Mutex
 	// queue carries pushed events to the writer goroutine. A full queue means
-	// the client is not keeping up, and the event is dropped (§11.8).
+	// the client is not keeping up, and the event is dropped (「可观测性」).
 	queue chan json.RawMessage
 	done  chan struct{}
 	// hello is closed once the handshake has been read, which is what tells
@@ -493,7 +493,7 @@ func (c *client) writeLoop() {
 //
 // A message may be sent either enveloped (`{"type":"hello","data":{...}}`)
 // or flat (`{"type":"hello","role":"observer"}`), because the documented
-// shapes in DESIGN.md §12.4 are flat and a human poking at the pipe will
+// shapes in DESIGN.md「IPC 宿主」 are flat and a human poking at the pipe will
 // write them that way.
 func (c *client) handle(line []byte) {
 	var env Envelope
@@ -567,7 +567,7 @@ func (c *client) handleExec(data json.RawMessage) {
 	}
 	if !c.isOperator() {
 		// Arbitration is also an authorization rule: an observer may not
-		// drive the terminal pool (§12.4, §12.5).
+		// drive the terminal pool (「IPC 宿主」).
 		_ = c.send(MsgExecResult, execWire{Key: req.Key, Result: ExecResult{
 			Error: "role observer may not exec",
 		}})
@@ -605,7 +605,7 @@ func (c *client) isOperator() bool {
 
 // offer queues an event for an attached client, dropping it when the client
 // has fallen behind. It never blocks, so the publishing path never stalls
-// (§11.8).
+// (「可观测性」).
 //
 // An event that arrives before `hello` is not queued: the client's filter is
 // unknown until then, and `--last` is the explicit way to ask for history.
@@ -735,7 +735,7 @@ type Conn struct {
 // Exec asks the host to run a command.
 //
 // A host-reported failure comes back as both a non-nil error and the result
-// it arrived in, so a caller can still inspect Busy and ExitCode (§12.4).
+// it arrived in, so a caller can still inspect Busy and ExitCode (「IPC 宿主」).
 func (c *Conn) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	if c == nil {
 		return ExecResult{}, errors.New("ipc: nil connection")
