@@ -15,16 +15,45 @@
 
 ## 安装
 
+**预编译二进制**（推荐，无需 Go 工具链）：从 [Releases](https://github.com/MiFaZhan/jms-client/releases/latest) 下载对应平台，解压后把 `jms`（Windows 为 `jms.exe`）放进 `PATH`：
+
+| 平台 | 文件 |
+|---|---|
+| Windows x86_64 | `jms-client_<版本>_windows_amd64.zip` |
+| Windows ARM64 | `jms-client_<版本>_windows_arm64.zip` |
+| macOS Apple Silicon | `jms-client_<版本>_darwin_arm64.tar.gz` |
+| macOS Intel | `jms-client_<版本>_darwin_amd64.tar.gz` |
+| Linux x86_64 | `jms-client_<版本>_linux_amd64.tar.gz` |
+| Linux ARM64 | `jms-client_<版本>_linux_arm64.tar.gz` |
+
+每个压缩包同时带 `checksums.txt` 可供校验。
+
+**用 Go 安装**（需 Go 1.25+）：
+
 ```sh
 go install github.com/MiFaZhan/jms-client/cmd/jms@latest
 ```
 
-或从源码构建：
+**从源码构建**：
 
 ```sh
 git clone https://github.com/MiFaZhan/jms-client
 cd jms-client
 go build -o jms ./cmd/jms
+```
+
+### MCP 客户端（Claude Desktop 等）
+
+下载 [Releases](https://github.com/MiFaZhan/jms-client/releases/latest) 里的 `jms-client.mcpb` 双击安装。**这一个文件已包含全部 6 个平台**（macOS/Linux/Windows × x86_64/arm64）的预编译二进制，启动时由内置 launcher 自动选择当前平台，无需按平台挑文件。
+
+也可以手动配置，让 MCP 客户端直接调用已安装的 `jms`：
+
+```json
+{
+  "mcpServers": {
+    "jms": { "command": "jms", "args": ["mcp"] }
+  }
+}
 ```
 
 ## 快速开始
