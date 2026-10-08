@@ -161,29 +161,54 @@ gh release view "$tag" --json assets --jq '.assets[].name' | sort
 
 step "Verifying the MCP Registry record"
 # The registry stores the hash of the bundle. If it disagrees with what was
-# uploaded, every client that installs the bundle will reject it, so this
-# is checked rather than assumed.
-sleep 5
-reg_sha=$(curl -sL "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.MiFaZhan/jms-client" \
-    | python -c "
-import json,sys
+# uploaded, every client that installs the bundle rejects it, so this is
+# checked rather than assumed.
+#
+# Two things this has to get right, both of which an earlier version got
+# wrong. It must select the record for THIS version: the registry keeps a
+# record per version, so reading the first one compares a new bundle against
+# the previous release's hash and fails on every release after the first.
+# And it has to publish when the record is missing, because a first release
+# of a new version has nothing to compare against yet.
+registry_sha_for_version() {
+    curl -sL "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.MiFaZhan/jms-client" \
+        | VERSION="$version" python -c "
+import json, os, sys
 try:
     d = json.load(sys.stdin)
 except Exception:
-    print('')
     raise SystemExit
+want = os.environ['VERSION']
 for s in d.get('servers', []):
     sv = s.get('server', {})
+    if sv.get('version') != want:
+        continue
     for p in sv.get('packages') or []:
-        print(p.get('fileSha256',''))
-" | head -1)
+        print(p.get('fileSha256', ''))
+        raise SystemExit
+"
+}
+
+sleep 5
+reg_sha=$(registry_sha_for_version)
 
 if [ -z "$reg_sha" ]; then
-    echo "  the registry has no record yet; publish mcpb/server.json with mcp-publisher" >&2
+    if command -v mcp-publisher >/dev/null 2>&1; then
+        echo "  no registry record for $version yet; publishing"
+        ( cd mcpb && mcp-publisher publish )
+        sleep 5
+        reg_sha=$(registry_sha_for_version)
+    else
+        fail "mcp-publisher is not on PATH, so the registry record for $version cannot be published"
+    fi
+fi
+
+if [ -z "$reg_sha" ]; then
+    fail "the registry still has no record for $version after publishing"
 elif [ "$reg_sha" = "$bundle_sha" ]; then
-    echo "  registry sha matches the uploaded bundle"
+    echo "  registry sha for $version matches the uploaded bundle"
 else
-    fail "registry sha ($reg_sha) does not match the bundle ($bundle_sha); run 'mcp-publisher publish' from mcpb/"
+    fail "registry sha for $version ($reg_sha) does not match the bundle ($bundle_sha)"
 fi
 
 step "Verifying the Go module proxy"
@@ -198,9 +223,16 @@ done
 
 step "Release $tag complete"
 cat <<EOF
-  Next, if this is the first release or the bundle changed:
-    cd mcpb && mcp-publisher publish
+  The GitHub release is a draft. Check the assets above, then publish it:
+    gh release edit $tag --draft=false
 
-  Scoop picks the new version up from the bucket on the next
-  \`scoop update\`; the manifest was committed by GoReleaser.
+  The MCP registry record for $version was published and verified above.
+
+  Scoop: .goreleaser.yaml sets skip_upload, so the manifest in
+  dist/scoop/ was not pushed. Push it to the bucket to make the new
+  version installable:
+    gh api -X PUT repos/MiFaZhan/scoop-bucket/contents/bucket/jms-client.json \\
+      -f message="jms-client $version" -f branch=main \\
+      -f content="\$(base64 -w0 dist/scoop/jms-client.json)"
+  (or clone the bucket and commit the file).
 EOF

@@ -142,7 +142,12 @@ import hashlib,sys
 print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())
 " "$out")
 
-if [ "${1:-}" != "--use-dist" ] && [ "${WRITE_SERVER_JSON:-0}" = "1" ]; then
+# WRITE_SERVER_JSON alone decides this. An earlier version also required
+# $1 != "--use-dist", but release.sh passes --use-dist in both its dry-run
+# and its real path (it distinguishes them with WRITE_SERVER_JSON), so that
+# clause made the rewrite unreachable and every release would have shipped a
+# server.json whose fileSha256 named the previous bundle.
+if [ "${WRITE_SERVER_JSON:-0}" = "1" ]; then
     python - "$sha" <<'PY'
 import json, re, sys
 
