@@ -25,9 +25,8 @@ func newMCPCommand(deps *Deps) *cobra.Command {
 
 Every tool call goes through this process's connection pool, so a second call
 for the same asset reuses the live session instead of logging in again. The
-host also accepts ` + "`jms attach`" + ` clients, which then
-watch the same event stream and can run commands on the same pooled
-connections.
+host also accepts ` + "`jms attach`" + ` clients, which then watch the same
+event stream and can run commands on the same pooled connections.
 
 Diagnostics go to stderr: stdout is the MCP protocol channel.`,
 		Args: cobra.NoArgs,
@@ -160,6 +159,7 @@ func targetSpec(asset, server string) string {
 func mcpOptions(deps Deps) mcpserver.Options {
 	return mcpserver.Options{
 		ConfigPath: deps.ConfigPath,
+		Version:    effectiveVersion(),
 		Actor:      mcpActor(),
 		Bus:        deps.Runtime.Bus,
 		Sessions:   deps.Runtime.Sessions,

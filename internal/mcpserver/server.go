@@ -54,6 +54,19 @@ const DefaultExecTimeout = 30 * time.Second
 // ServerName is the MCP implementation name.
 const ServerName = "jms"
 
+// ServerVersion is the version reported to MCP clients when Options.Version
+// is empty. It is a fallback only: the CLI passes its own version so a
+// client sees the same string `jms version` prints.
+const ServerVersion = "0.1.0"
+
+// implementationVersion resolves the version to advertise.
+func implementationVersion(opts Options) string {
+	if v := strings.TrimSpace(opts.Version); v != "" {
+		return v
+	}
+	return ServerVersion
+}
+
 // SessionFunc returns an authenticated session for one server alias,
 // together with the server entry it belongs to.
 //
@@ -120,6 +133,11 @@ type RelayRequest struct {
 type Options struct {
 	// ConfigPath overrides the configuration file path.
 	ConfigPath string
+	// Version is reported to MCP clients in the initialize handshake. Empty
+	// means ServerVersion, the package default. The caller injects it so the
+	// version a client sees matches `jms version` rather than drifting from
+	// it.
+	Version string
 	// Actor names this client in the audit stream (e.g. "mcp:pi").
 	Actor string
 	// Bus receives audit events; nil disables publication.
@@ -243,7 +261,7 @@ func (s *Server) logger() *slog.Logger {
 // build creates the SDK server with every tool registered.
 func (s *Server) build() *mcp.Server {
 	srv := mcp.NewServer(
-		&mcp.Implementation{Name: ServerName, Version: "1.0.0"},
+		&mcp.Implementation{Name: ServerName, Version: implementationVersion(s.opts)},
 		&mcp.ServerOptions{Logger: s.logger()},
 	)
 

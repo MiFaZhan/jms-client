@@ -101,7 +101,7 @@ jms mcp [--print-config]                       # stdio MCP 服务器
 
 ## MCP
 
-`jms mcp` 暴露 8 个工具：`jms_ls`、`jms_resolve_asset`、`jms_exec`、`jms_sftp_upload`、`jms_sftp_download`、`jms_sftp_relay`、`jms_config_list`、`jms_pool_status`（调试）。
+`jms mcp` 暴露 7 个工具：`jms_ls`、`jms_resolve_asset`、`jms_exec`、`jms_sftp_upload`、`jms_sftp_download`、`jms_sftp_relay`、`jms_config_list`。设 `JMS_MCP_DEBUG=1` 时额外注册第 8 个调试工具 `jms_pool_status`。
 
 客户端配置片段：
 
