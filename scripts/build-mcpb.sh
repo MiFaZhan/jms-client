@@ -103,12 +103,23 @@ def is_executable(rel: str) -> bool:
     return name.startswith("jms-") and not name.endswith(".cmd")
 
 
+# Fixed timestamp for every entry, so the same inputs always produce the
+# same bytes and therefore the same SHA-256. Without this the archive
+# carries each file's mtime, and the hash in server.json would have to be
+# recomputed after every rebuild — which makes "build, record the hash,
+# upload" fail the moment anything is retried. 1980-01-01 is the earliest
+# value the ZIP format can represent.
+EPOCH = (1980, 1, 1, 0, 0, 0)
+
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-    for dirpath, _, filenames in os.walk(stage):
+    for dirpath, dirnames, filenames in os.walk(stage):
+        # Sort both, so the archive entry order does not depend on the
+        # filesystem's directory order.
+        dirnames.sort()
         for fn in sorted(filenames):
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, stage).replace(os.sep, "/")
-            info = zipfile.ZipInfo.from_file(full, rel)
+            info = zipfile.ZipInfo(rel, date_time=EPOCH)
             info.compress_type = zipfile.ZIP_DEFLATED
             # The mode lives in the high 16 bits of external_attr. Write it
             # once: setting the field and then OR-ing into it produced two
@@ -137,14 +148,18 @@ import json, re, sys
 
 sha = sys.argv[1]
 path = "mcpb/server.json"
-with open(path, encoding="utf-8") as fh:
+with open(path, encoding="utf-8", newline="") as fh:
     text = fh.read()
 # Rewrite just the hash field, so comments, key order and formatting that a
 # human chose survive.
 updated, n = re.subn(r'("fileSha256":\s*")[0-9a-f]{64}(")', rf'\g<1>{sha}\g<2>', text)
 if n != 1:
     sys.exit(f"expected exactly one fileSha256 field in {path}, found {n}")
-with open(path, "w", encoding="utf-8") as fh:
+# newline="" keeps the file's existing line endings: Python's default text
+# mode would rewrite every \n as \r\n on Windows, which is how an earlier
+# version of this script turned the file CRLF and made it inconsistent with
+# the rest of the tree.
+with open(path, "w", encoding="utf-8", newline="") as fh:
     fh.write(updated)
 print(f"build-mcpb: updated {path} with the new hash", file=sys.stderr)
 PY
