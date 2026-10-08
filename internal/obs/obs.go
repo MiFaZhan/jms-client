@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -107,10 +108,18 @@ func (f SubscriberFunc) Publish(e Event) { f(e) }
 type subscriberSlot struct {
 	sub Subscriber
 	ch  chan Event
+	// done is closed by drain once the queue is empty and the goroutine is
+	// about to exit, so Drain can tell "nothing queued" from "nothing left to
+	// deliver".
+	done chan struct{}
+	// pending counts events accepted but not yet handed to sub. Drain waits
+	// for it to reach zero, which is the only correct completion signal: an
+	// empty queue alone cannot distinguish an in-flight delivery.
+	pending atomic.Int64
 }
 
 func newSubscriberSlot(s Subscriber) *subscriberSlot {
-	slot := &subscriberSlot{sub: s, ch: make(chan Event, subscriberBuffer)}
+	slot := &subscriberSlot{sub: s, ch: make(chan Event, subscriberBuffer), done: make(chan struct{})}
 	go slot.drain()
 	return slot
 }
@@ -121,8 +130,10 @@ func newSubscriberSlot(s Subscriber) *subscriberSlot {
 // already unreachable from the bus at that point, so the only cost is the
 // stuck goroutine the subscriber itself created.
 func (s *subscriberSlot) drain() {
+	defer close(s.done)
 	for e := range s.ch {
 		s.sub.Publish(e)
+		s.pending.Add(-1)
 	}
 }
 
@@ -236,12 +247,57 @@ func (b *Bus) Publish(e Event) {
 	defer b.mu.Unlock()
 	b.record(e)
 	for _, slot := range b.slots {
+		// The count is taken before the send so Drain cannot observe the
+		// gap between "queued" and "accounted for" and report completion
+		// while an event is still on its way.
+		slot.pending.Add(1)
 		select {
 		case slot.ch <- e:
 		default:
+			slot.pending.Add(-1)
 			b.dropped++
 		}
 	}
+}
+
+// Drain waits until every queued event has been handed to its subscriber.
+//
+// It exists for the short-lived process: delivery is asynchronous by design,
+// so a command that returns immediately after publishing would otherwise let
+// os.Exit drop the very record of what it did. It reports false when the
+// timeout expires first, which is the only outcome a stuck subscriber can
+// produce; the caller decides whether that is worth reporting.
+//
+// A nil bus drains instantly: nothing was ever queued.
+func (b *Bus) Drain(timeout time.Duration) bool {
+	if b == nil {
+		return true
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if b.pendingDeliveries() == 0 {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		// The wait is a poll rather than a condition variable because the
+		// counter is per-slot and Publish must stay lock-free on the hot
+		// path. The interval only bounds how long a one-shot process waits at
+		// exit, so it is deliberately short.
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// pendingDeliveries sums the events accepted but not yet delivered.
+func (b *Bus) pendingDeliveries() int64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	var total int64
+	for _, slot := range b.slots {
+		total += slot.pending.Load()
+	}
+	return total
 }
 
 // record appends e to the replay ring, overwriting the oldest entry once the
@@ -456,6 +512,169 @@ func (w *AuditWriter) Path() string {
 	return w.path
 }
 
+// AuditSink is a Subscriber that opens its per-pid file on the first event.
+//
+// It exists for the CLI, where one Runtime is built for every invocation
+// including read-only ones (`jms version`, `jms ls`): opening the file
+// eagerly would leave an empty audit-*.jsonl behind for every command that
+// never ran anything, and `jms tail` merges that whole directory. The
+// directory is validated eagerly so a broken audit location is still
+// reported before the command does its work, but no file is created until
+// there is something to record.
+type AuditSink struct {
+	opts AuditOptions
+
+	mu      sync.Mutex
+	writer  *AuditWriter
+	opened  bool
+	openErr error
+}
+
+// NewAuditSink validates the audit location and returns a sink that will
+// open its file on first use.
+//
+// It honours the same environment switches as NewBusWithAudit: JMS_AUDIT=off
+// disables auditing, JMS_AUDIT_DIR relocates the directory, JMS_AUDIT_FULL=1
+// stores full output and JMS_AUDIT_PREVIEW_BYTES tunes the preview. It
+// returns (nil, nil) when auditing is off.
+func NewAuditSink(opts AuditOptions) (*AuditSink, error) {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv(EnvAudit)), "off") {
+		return nil, nil
+	}
+	opts = resolveAuditOptions(opts)
+
+	// Resolving the directory here catches a configuration that cannot be
+	// located at all. Creating it is deferred to Prepare (or to the first
+	// event): `jms version` builds the same Runtime as `jms exec`, and a
+	// read-only command must not leave an audit directory behind.
+	if _, err := auditDir(opts.Dir); err != nil {
+		return nil, err
+	}
+	return &AuditSink{opts: opts}, nil
+}
+
+// Prepare creates the audit directory and verifies it is usable.
+//
+// The long-lived host calls it at startup so a misconfigured audit location
+// is reported before any tool call runs, rather than being discovered when
+// the first event tries to land. One-shot commands skip it: their failure is
+// reported by Close, after the work they were asked to do.
+func (s *AuditSink) Prepare() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prepareLocked()
+}
+
+// resolveAuditOptions folds the environment switches into opts.
+func resolveAuditOptions(opts AuditOptions) AuditOptions {
+	if opts.Dir == "" {
+		opts.Dir = strings.TrimSpace(os.Getenv(EnvAuditDir))
+	}
+	if !opts.Full && strings.TrimSpace(os.Getenv(EnvAuditFull)) == "1" {
+		opts.Full = true
+	}
+	if opts.PreviewBytes <= 0 {
+		// A malformed tunable falls back to the default: a typo must not
+		// disable auditing or stop the process.
+		if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(EnvAuditPreviewBytes))); err == nil && n > 0 {
+			opts.PreviewBytes = n
+		}
+	}
+	return opts
+}
+
+// Publish implements Subscriber, opening the file on the first event.
+func (s *AuditSink) Publish(e Event) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.opened {
+		s.opened = true
+		// The directory is created here as well as in Prepare, because a
+		// one-shot command never calls Prepare: its first event is what
+		// justifies the directory's existence.
+		if err := s.prepareLocked(); err != nil {
+			s.openErr = err
+			return
+		}
+		writer, err := NewAuditWriter(s.opts)
+		if err != nil {
+			// A Subscriber cannot return the error, so it is remembered and
+			// reported by Close. Losing the audit file must not stop the
+			// command that is being audited.
+			s.openErr = err
+			return
+		}
+		s.writer = writer
+	}
+	if s.writer == nil {
+		return
+	}
+	s.writer.Publish(e)
+}
+
+// prepareLocked creates the audit directory; the caller holds s.mu.
+func (s *AuditSink) prepareLocked() error {
+	dir, err := auditDir(s.opts.Dir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create audit directory %s: %w", dir, err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("restrict audit directory %s: %w", dir, err)
+	}
+	return nil
+}
+
+// Close flushes and closes the file, reporting any failure.
+func (s *AuditSink) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.openErr != nil {
+		return s.openErr
+	}
+	return s.writer.Close()
+}
+
+// Path returns the file path, or "" when it was never opened.
+func (s *AuditSink) Path() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writer.Path()
+}
+
+// NewBusWithLazyAudit wires a bus to a sink that opens its file on first
+// event, and returns the bus plus that sink.
+//
+// It is the CLI's variant of NewBusWithAudit: same environment switches and
+// same non-blocking bus, but no empty audit file for a command that never
+// recorded anything. The returned bus is never nil; the sink is nil when
+// auditing is off, and the error reports an unusable audit location.
+func NewBusWithLazyAudit(opts AuditOptions) (*Bus, *AuditSink, error) {
+	bus := NewBus(0)
+	sink, err := NewAuditSink(opts)
+	if err != nil {
+		return bus, nil, err
+	}
+	if sink != nil {
+		bus.Subscribe(sink)
+	}
+	return bus, sink, nil
+}
+
 // NewBusWithAudit wires a bus to an audit writer when auditing is enabled.
 //
 // JMS_AUDIT=off disables it; JMS_AUDIT_DIR relocates the directory;
@@ -479,19 +698,7 @@ func NewBusWithAudit(ctx context.Context, opts AuditOptions) (*Bus, *AuditWriter
 	if strings.EqualFold(strings.TrimSpace(os.Getenv(EnvAudit)), "off") {
 		return bus, nil, nil
 	}
-	if opts.Dir == "" {
-		opts.Dir = strings.TrimSpace(os.Getenv(EnvAuditDir))
-	}
-	if !opts.Full && strings.TrimSpace(os.Getenv(EnvAuditFull)) == "1" {
-		opts.Full = true
-	}
-	if opts.PreviewBytes <= 0 {
-		// A malformed tunable falls back to the default: a typo must not
-		// disable auditing or stop the process.
-		if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(EnvAuditPreviewBytes))); err == nil && n > 0 {
-			opts.PreviewBytes = n
-		}
-	}
+	opts = resolveAuditOptions(opts)
 	writer, err := NewAuditWriter(opts)
 	if err != nil {
 		return bus, nil, err

@@ -36,6 +36,45 @@ const (
 // ErrClosed reports use of a pool after Close.
 var ErrClosed = errors.New("pool is closed")
 
+// EventKind names one pool lifecycle transition.
+type EventKind string
+
+// Lifecycle events. These are the pool's own vocabulary; the CLI is what
+// translates them into audit kinds (DESIGN.md「审计日志」).
+const (
+	// KindCold reports a terminal that had to be built.
+	KindCold EventKind = "cold"
+	// KindHit reports a command that reused a pooled terminal.
+	KindHit EventKind = "hit"
+	// KindEvict reports a terminal dropped because its stream was in an
+	// unknown state, or because a caller asked for it.
+	KindEvict EventKind = "evict"
+	// KindReap reports an idle terminal closed by the reaper.
+	KindReap EventKind = "reap"
+	// KindLogin reports a login the session pool performed.
+	KindLogin EventKind = "login"
+	// KindRelogin reports a login that replaced a session dropped by
+	// Invalidate.
+	KindRelogin EventKind = "relogin"
+)
+
+// Event is one pool lifecycle transition.
+//
+// It carries what the pool knows about its own key and nothing about the
+// audit schema, so this package stays independent of the observability
+// layer.
+type Event struct {
+	Kind     EventKind
+	Server   string
+	Asset    string
+	Account  string
+	Protocol string
+	// Idle is how long the terminal sat unused, for evict and reap.
+	Idle time.Duration
+	// Reason is a short cause, for evict.
+	Reason string
+}
+
 // sessionCall is one login in flight, shared by every caller that asks for
 // the same alias while it runs.
 type sessionCall struct {
@@ -63,6 +102,13 @@ type SessionPool struct {
 	// concurrent calls, so this is load-bearing, not an optimisation.
 	creating map[string]*sessionCall
 	closed   bool
+
+	// Notify, when set, receives one event per login the pool performs. It
+	// is called with no pool lock held.
+	Notify func(Event)
+	// invalidated records aliases dropped by Invalidate since their last
+	// login, so the next login for one is reported as a relogin.
+	invalidated map[string]bool
 }
 
 // NewSessionPool returns an empty pool.
@@ -134,17 +180,40 @@ func (p *SessionPool) GetWithProxy(ctx context.Context, srv *config.ServerConfig
 		// sessions, so the fresh one is dropped rather than cached.
 		err, sess = ErrClosed, nil
 	}
+	relogin := false
 	if err == nil {
 		if p.sessions == nil {
 			p.sessions = map[string]*auth.Session{}
 		}
 		p.sessions[alias] = sess
+		relogin = p.invalidated[alias]
+		delete(p.invalidated, alias)
 	}
 	p.mu.Unlock()
 
 	call.sess, call.err = sess, err
 	close(call.done)
+
+	if err == nil {
+		p.notifyLogin(alias, relogin)
+	}
 	return sess, err
+}
+
+// notifyLogin reports one login to the observer, if any.
+//
+// A relogin is a login that replaced a session Invalidate had dropped, which
+// is the retry-once policy's visible half: without it a reader cannot tell a
+// first login from a recovery.
+func (p *SessionPool) notifyLogin(alias string, relogin bool) {
+	if p == nil || p.Notify == nil {
+		return
+	}
+	kind := KindLogin
+	if relogin {
+		kind = KindRelogin
+	}
+	p.Notify(Event{Kind: kind, Server: alias})
 }
 
 // Invalidate drops the cached session for an alias so the next Get logs in
@@ -160,6 +229,10 @@ func (p *SessionPool) Invalidate(alias string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.sessions, alias)
+	if p.invalidated == nil {
+		p.invalidated = map[string]bool{}
+	}
+	p.invalidated[alias] = true
 }
 
 // Close drops every cached session.
@@ -197,6 +270,19 @@ type TerminalPool struct {
 	// network.
 	Connect func(ctx context.Context, sess *auth.Session, asset assets.Info, opts transport.ConnectOptions) (transport.Terminal, error)
 	Resolve func(ctx context.Context, sess *auth.Session, name, account, protocol string) (assets.Info, error)
+
+	// Notify, when set, receives every lifecycle transition: a cold start, a
+	// hit, an eviction and a reap. It is called with no pool or terminal
+	// lock held, so a slow observer cannot stall the pool.
+	Notify func(Event)
+}
+
+// notify delivers one event when an observer is installed.
+func (p *TerminalPool) notify(ev Event) {
+	if p == nil || p.Notify == nil {
+		return
+	}
+	p.Notify(ev)
 }
 
 // NewTerminalPool returns an empty terminal pool.
@@ -345,11 +431,19 @@ func (p *TerminalPool) runOnce(ctx context.Context, key termKey, srv *config.Ser
 		evicted := err != nil && p.detach(key, t)
 		t.mu.Unlock()
 
+		// Observers are notified only once the terminal lock is released, so a
+		// slow subscriber can never stall the pool while a connection is held.
+		if reused {
+			p.notify(Event{Kind: KindHit, Server: key.Server, Asset: key.Asset,
+				Account: key.Account, Protocol: key.Protocol})
+		}
 		if evicted {
 			// Closing outside the lock is safe: t is out of the pool, and
 			// every other caller re-checks the map under t.mu before
 			// executing, so nothing can reach it again.
 			_ = t.term.Close()
+			p.notify(Event{Kind: KindEvict, Server: key.Server, Asset: key.Asset,
+				Account: key.Account, Protocol: key.Protocol, Reason: "execution failed"})
 		}
 		return res, err
 	}
@@ -440,14 +534,21 @@ func (p *TerminalPool) acquire(ctx context.Context, key termKey, srv *config.Ser
 	if err == nil && p.closed {
 		err = ErrClosed
 	}
+	created := false
 	if err == nil {
 		if p.terminals == nil {
 			p.terminals = map[termKey]*pooledTerm{}
 		}
 		p.terminals[key] = t
 		p.cold++
+		created = true
 	}
 	p.mu.Unlock()
+
+	if created {
+		p.notify(Event{Kind: KindCold, Server: key.Server, Asset: key.Asset,
+			Account: key.Account, Protocol: key.Protocol})
+	}
 
 	if err != nil {
 		if t != nil {
@@ -554,8 +655,11 @@ func (p *TerminalPool) evictTerm(key termKey, t *pooledTerm) {
 		return
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	idle := time.Since(t.lastUse)
 	_ = t.term.Close()
+	t.mu.Unlock()
+	p.notify(Event{Kind: KindEvict, Server: key.Server, Asset: key.Asset,
+		Account: key.Account, Protocol: key.Protocol, Idle: idle, Reason: "evicted"})
 }
 
 // Evict closes and removes one terminal.
@@ -599,9 +703,12 @@ func (p *TerminalPool) Reap(now time.Time, ttl time.Duration) int {
 		// The idle test is repeated under the terminal lock: a command that
 		// finished while this loop walked the keys has refreshed lastUse.
 		if now.Sub(t.lastUse) > ttl && p.detach(key, t) {
+			idle := now.Sub(t.lastUse)
 			closed++
 			t.mu.Unlock()
 			_ = t.term.Close()
+			p.notify(Event{Kind: KindReap, Server: key.Server, Asset: key.Asset,
+				Account: key.Account, Protocol: key.Protocol, Idle: idle})
 			continue
 		}
 		t.mu.Unlock()
@@ -656,6 +763,35 @@ func (p *TerminalPool) Stats() Stats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return Stats{Terminals: len(p.terminals), Hits: p.hits, Cold: p.cold}
+}
+
+// RunReaper reaps idle terminals every interval until ctx is cancelled.
+//
+// It is the production caller Reap never had: the pool only knows how to
+// close an idle terminal, and a long-lived process needs something to keep
+// asking it to. Without this, a terminal stayed in the pool until its process
+// exited (DESIGN.md「连接池」3.2: 空闲回收).
+//
+// The loop is meant to be started with `go` by a long-lived host. It returns
+// when ctx is done, so the goroutine does not outlive the host. A nil pool
+// or a non-positive interval makes it return immediately rather than spin.
+//
+// The ttl is passed on every pass instead of being read once, so a caller
+// that tunes it later is not silently ignored.
+func (p *TerminalPool) RunReaper(ctx context.Context, interval time.Duration, ttl time.Duration) {
+	if p == nil || interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			p.Reap(now, ttl)
+		}
+	}
 }
 
 // serverAlias is the pool key for a server config; nil keys as "".

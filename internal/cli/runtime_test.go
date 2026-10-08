@@ -24,6 +24,10 @@ type runtimeFakes struct {
 	execCalls []fakeExecCall
 	execRes   transport.Result
 	execErr   error
+	// afterExec, when set, runs after the exec seam returns, so a test can
+	// publish pool events the way a real pool does: from inside the command,
+	// before the process has a chance to exit.
+	afterExec func(Deps)
 
 	transferCalls []TransferRequest
 	transferRes   xfer.Result
@@ -46,26 +50,28 @@ type fakeExecCall struct {
 // depsRuntime clones env.deps and installs the fakes into Runtime's seams.
 // A command that reaches for the real pool or the real transport instead
 // of these seams fails loudly: no seam here dials anywhere.
+//
+// Only the seams are replaced: the Runtime itself is the one WithDefaults
+// built, so the audit bus, the pools and the reaper settings a real command
+// gets are the ones these tests exercise.
 func (f *runtimeFakes) depsRuntime(env *cliEnv) Deps {
 	d := env.deps().WithDefaults()
-	d.Runtime = &Runtime{
-		Sessions:  d.Runtime.Sessions,
-		Terminals: d.Runtime.Terminals,
-		AuditDir:  d.Runtime.AuditDir,
-		Bus:       d.Runtime.Bus,
-		Exec: func(_ context.Context, srv *config.ServerConfig, sess *auth.Session,
-			asset, cmd string, opts connpool.ExecOptions) (transport.Result, error) {
-			f.execCalls = append(f.execCalls, fakeExecCall{
-				server: srv, sess: sess, asset: asset, cmd: cmd, opts: opts,
-			})
-			return f.execRes, f.execErr
-		},
-		Transfer: func(_ context.Context, req TransferRequest) (xfer.Result, error) {
-			f.transferCalls = append(f.transferCalls, req)
-			return f.transferRes, f.transferErr
-		},
-		Bridge: f.bridge,
+	rt := d.Runtime
+	rt.Exec = func(_ context.Context, srv *config.ServerConfig, sess *auth.Session,
+		asset, cmd string, opts connpool.ExecOptions) (transport.Result, error) {
+		f.execCalls = append(f.execCalls, fakeExecCall{
+			server: srv, sess: sess, asset: asset, cmd: cmd, opts: opts,
+		})
+		if f.afterExec != nil {
+			f.afterExec(d)
+		}
+		return f.execRes, f.execErr
 	}
+	rt.Transfer = func(_ context.Context, req TransferRequest) (xfer.Result, error) {
+		f.transferCalls = append(f.transferCalls, req)
+		return f.transferRes, f.transferErr
+	}
+	rt.Bridge = f.bridge
 	return d
 }
 
