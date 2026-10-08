@@ -18,6 +18,7 @@ import (
 	"github.com/MiFaZhan/jms-client/internal/assets"
 	"github.com/MiFaZhan/jms-client/internal/auth"
 	"github.com/MiFaZhan/jms-client/internal/config"
+	"github.com/MiFaZhan/jms-client/internal/netproxy"
 	"github.com/MiFaZhan/jms-client/internal/transport"
 )
 
@@ -81,6 +82,16 @@ func NewSessionPool() *SessionPool {
 // and MCP surfaces name.
 func (p *SessionPool) Get(ctx context.Context, srv *config.ServerConfig, baseURL string,
 	creds auth.Credentials, otpPrompt func() (string, error)) (*auth.Session, error) {
+	return p.GetWithProxy(ctx, srv, baseURL, creds, otpPrompt, netproxy.Direct())
+}
+
+// GetWithProxy is Get with an explicit proxy policy.
+//
+// The policy is recorded on the session so the KoKo WebSocket, SSH and
+// SFTP connections derived from it reach the same network the login did
+// (DESIGN.md §6.1).
+func (p *SessionPool) GetWithProxy(ctx context.Context, srv *config.ServerConfig, baseURL string,
+	creds auth.Credentials, otpPrompt func() (string, error), px netproxy.Proxy) (*auth.Session, error) {
 	if p == nil {
 		return nil, ErrClosed
 	}
@@ -114,7 +125,7 @@ func (p *SessionPool) Get(ctx context.Context, srv *config.ServerConfig, baseURL
 	p.creating[alias] = call
 	p.mu.Unlock()
 
-	sess, err := auth.Login(ctx, srv, baseURL, creds, otpPrompt)
+	sess, err := auth.LoginWithProxy(ctx, srv, baseURL, creds, otpPrompt, px)
 
 	p.mu.Lock()
 	delete(p.creating, alias)

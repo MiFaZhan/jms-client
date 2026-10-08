@@ -118,6 +118,12 @@ func dialWSOnce(ctx context.Context, sess *auth.Session, asset assets.Info,
 
 // dialWS performs the actual upgrade, carrying the session cookie and the
 // JMS-KOKO subprotocol.
+//
+// The dialer carries the session's proxy policy explicitly. Leaving
+// gorilla's Proxy field unset means "direct", which is what jms wants by
+// default — but stating it makes the policy visible and, more
+// importantly, keeps the WebSocket on the same path as the REST login
+// that produced the session (DESIGN.md §6.1).
 func dialWS(ctx context.Context, sess *auth.Session, wsURL string) (*websocket.Conn, *http.Response, error) {
 	header := http.Header{}
 	if sid := sess.SessionID(); sid != "" {
@@ -126,6 +132,7 @@ func dialWS(ctx context.Context, sess *auth.Session, wsURL string) (*websocket.C
 	dialer := websocket.Dialer{
 		HandshakeTimeout: wsConnectTimeout,
 		Subprotocols:     []string{WSSubprotocol},
+		Proxy:            sess.NetProxy().HTTPProxyFunc(),
 	}
 	return dialer.DialContext(ctx, wsURL, header)
 }

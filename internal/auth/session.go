@@ -22,6 +22,7 @@ import (
 
 	"github.com/MiFaZhan/jms-client/internal/api"
 	"github.com/MiFaZhan/jms-client/internal/config"
+	"github.com/MiFaZhan/jms-client/internal/netproxy"
 )
 
 // Endpoint paths used by the dual login (DESIGN.md §3.4).
@@ -66,6 +67,26 @@ type Session struct {
 	Server  *config.ServerConfig
 	Client  *api.Client
 	BaseURL string
+	// Proxy is the resolved proxy policy the session was established
+	// with. Every later connection derived from this session (KoKo
+	// WebSocket, SSH, SFTP) must use the same policy, or the failover
+	// policy in §4.7 would reason about a different network than the
+	// login it observed (DESIGN.md §6.1).
+	Proxy netproxy.Proxy
+}
+
+// NetProxy returns the proxy policy this session was established with.
+//
+// A session built outside the login flow (tests, or a hand-assembled
+// session) has the zero value, which is the direct policy. Every
+// transport derived from a session must dial through this policy so that
+// probe, login, KoKo WebSocket, SSH and SFTP all measure one network
+// (DESIGN.md §6.1).
+func (s *Session) NetProxy() netproxy.Proxy {
+	if s == nil {
+		return netproxy.Direct()
+	}
+	return s.Proxy
 }
 
 // Bearer returns the API bearer token, or "" before a successful login.
@@ -92,7 +113,18 @@ func (s *Session) CSRF() string {
 	return s.Client.Cookie(CookieCSRF)
 }
 
-// Login performs the full dual login against baseURL:
+// Login performs the full dual login against baseURL over a direct
+// connection.
+//
+// It is LoginWithProxy with the direct policy, which is the default
+// (DESIGN.md §6.1): jms never reads HTTP_PROXY/HTTPS_PROXY on its own.
+func Login(ctx context.Context, srv *config.ServerConfig, baseURL string, creds Credentials,
+	otpPrompt func() (string, error)) (*Session, error) {
+
+	return LoginWithProxy(ctx, srv, baseURL, creds, otpPrompt, netproxy.Direct())
+}
+
+// LoginWithProxy performs the full dual login against baseURL:
 //
 //  1. POST /api/v1/authentication/auth/ for the Bearer token, retrying
 //     through /api/v1/authentication/mfa/challenge/ when the server asks
@@ -106,11 +138,14 @@ func (s *Session) CSRF() string {
 // Any failure during the login flow is reported as an *api.AuthError, so
 // callers can distinguish "this endpoint rejects the credential" from
 // "this endpoint is unreachable" (DESIGN.md §4.7).
-func Login(ctx context.Context, srv *config.ServerConfig, baseURL string, creds Credentials,
-	otpPrompt func() (string, error)) (*Session, error) {
+//
+// The proxy policy is recorded on the session so every transport derived
+// from it stays on the same network path.
+func LoginWithProxy(ctx context.Context, srv *config.ServerConfig, baseURL string, creds Credentials,
+	otpPrompt func() (string, error), px netproxy.Proxy) (*Session, error) {
 
-	client := api.New(baseURL)
-	sess := &Session{Server: srv, Client: client, BaseURL: client.BaseURL()}
+	client := api.NewWithProxy(baseURL, px)
+	sess := &Session{Server: srv, Client: client, BaseURL: client.BaseURL(), Proxy: px}
 
 	if err := apiLogin(ctx, sess, creds, otpPrompt); err != nil {
 		return nil, err

@@ -19,6 +19,7 @@ import (
 type tomlDoc struct {
 	Version       float64              `toml:"version"`
 	DefaultServer string               `toml:"default_server"`
+	Proxy         string               `toml:"proxy,omitempty"`
 	Servers       map[string]tomlEntry `toml:"servers"`
 }
 
@@ -30,6 +31,7 @@ type tomlEntry struct {
 	Username string `toml:"username"`
 	Prefer   string `toml:"prefer,omitempty"`
 	Pin      string `toml:"pin,omitempty"`
+	Proxy    string `toml:"proxy,omitempty"`
 	SSHPort  *int   `toml:"ssh_port,omitempty"`
 }
 
@@ -69,6 +71,8 @@ func marshalConfig(cfg *AppConfig) ([]byte, error) {
 			External: srv.External,
 			Username: srv.Username,
 			Prefer:   srv.Prefer,
+			Pin:      srv.Pin,
+			Proxy:    srv.Proxy,
 			SSHPort:  optionalPort(srv.SSHPort),
 		}
 	}
@@ -82,8 +86,9 @@ func marshalConfig(cfg *AppConfig) ([]byte, error) {
 	enc.Indent = ""
 	if err := enc.Encode(struct {
 		DefaultServer string               `toml:"default_server"`
+		Proxy         string               `toml:"proxy,omitempty"`
 		Servers       map[string]tomlEntry `toml:"servers"`
-	}{DefaultServer: cfg.Default, Servers: servers}); err != nil {
+	}{DefaultServer: cfg.Default, Proxy: strings.TrimSpace(cfg.Proxy), Servers: servers}); err != nil {
 		return nil, fmt.Errorf("encode config: %w", err)
 	}
 
@@ -107,10 +112,16 @@ func parseConfig(path string, data []byte) (*AppConfig, error) {
 	cfg := &AppConfig{
 		Version: doc.Version,
 		Default: strings.TrimSpace(doc.DefaultServer),
+		Proxy:   strings.TrimSpace(doc.Proxy),
 		Servers: make(map[string]*ServerConfig, len(doc.Servers)),
 	}
 	if cfg.Version == 0 {
 		cfg.Version = ConfigVersion
+	}
+	if cfg.Proxy != "" {
+		if err := validateProxy(cfg.Proxy); err != nil {
+			return nil, fmt.Errorf("invalid config %s: %w", path, err)
+		}
 	}
 
 	names := make([]string, 0, len(doc.Servers))
@@ -131,6 +142,7 @@ func parseConfig(path string, data []byte) (*AppConfig, error) {
 			Username: strings.TrimSpace(entry.Username),
 			Prefer:   strings.ToLower(strings.TrimSpace(entry.Prefer)),
 			Pin:      strings.ToLower(strings.TrimSpace(entry.Pin)),
+			Proxy:    strings.TrimSpace(entry.Proxy),
 			SSHPort:  port,
 		}
 		if err := Validate(srv); err != nil {

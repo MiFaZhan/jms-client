@@ -438,8 +438,8 @@ func dialSSH(ctx context.Context, sess *auth.Session, token transport.Token) (*s
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // KoKo's key is ephemeral
 		Timeout:         transport.DialTimeout,
 	}
-	dialer := net.Dialer{Timeout: transport.DialTimeout}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	dialer := sess.NetProxy().DialContext(transport.DialTimeout)
+	conn, err := dialer(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("xfer: dial %s: %w", addr, err)
 	}

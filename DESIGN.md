@@ -244,7 +244,7 @@ stateDiagram-v2
 
 | 数据 | 存放位置 | 敏感性 |
 |---|---|---|
-| 别名 / 内网地址 / 外网地址 / 用户名 / prefer / ssh_port | `config.toml`（明文） | 低：地址与用户名不构成登录凭据 |
+| 别名 / 内网地址 / 外网地址 / 用户名 / prefer / ssh_port / proxy | `config.toml`（明文） | 低：地址与用户名不构成登录凭据 |
 | **password** | **OS 凭据库**（`go-keyring`） | 高 |
 | **otp_secret** | **OS 凭据库** | 高 |
 
@@ -283,6 +283,46 @@ flowchart TD
 5. **探测是加速器不是判决**：TCP 只证明端口可达，VPN 半连（TCP 通、服务坏）靠登录阶段网络类失败继续转移兜底；探测全失败时对首选候选做一次完整登录尝试
 6. **last-good 跨进程持久化**：小 JSON 文件（原子写入），CLI 一次性调用也免探测；10 分钟 TTL，失败即重新解析，最坏后果只是多一次探测
 7. **人工覆盖**：`--endpoint internal|external`；审计事件带 `endpoint: internal|external`，`jms tail` 渲染徽标
+
+## 6.1 代理策略
+
+**默认直连，且绝不读取 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`。**
+
+环境变量约定对堡垒机客户端是错的默认值。开发机上跑着透明代理工具（Clash、Surge、企业 MITM）时这些变量是全局导出的，而工具自身的 `DIRECT` 规则又会命中堡垒机地址；结果是请求经由一个没人要求的代理离开进程，代理自己的错误（典型是一个空 body 的 502）冒充了真实网络结果。
+
+这个问题最初以一个更隐蔽的形态出现：`api.New` 当时把 `http.Client.Transport` 留空，于是 REST 客户端隐式继承了 `http.DefaultTransport`，也就继承了 `http.ProxyFromEnvironment`——而 TCP 探测、KoKo WebSocket、SSH、SFTP 四条路径都是裸 `net.Dialer`，一律直连。**探测和登录于是测的不是同一条网络路径**，§4.7 的故障转移据此推理了错误的那一条。
+
+修复是把策略显式化，并让五条出口共用一个：
+
+| 出口 | 位置 | 接入方式 |
+|---|---|---|
+| REST API | `internal/api/client.go` | `NewWithProxy` 设 `Transport`，直连时 `Proxy` 显式为 `nil` |
+| TCP 探测 | `internal/endpoint/endpoint.go` | `ProbeWith(px)`；直连时返回 `TCPProbe` 本身 |
+| KoKo WebSocket | `internal/transport/ws.go` | `websocket.Dialer.Proxy` 取会话策略 |
+| KoKo SSH | `internal/transport/ssh.go` | `px.DialContext` |
+| SFTP | `internal/xfer/xfer.go` | `px.DialContext` |
+
+关键决策：
+
+1. **策略绑定在会话上**：`auth.Session` 记录解析后的策略，之后从该会话派生的每条连接都必须用它，否则 §4.7 观察到的登录与后续动作会分属两个网络
+2. **探测与登录同路径**：探测只是登录的加速器，只有走同一条路由才谈得上"加速"。配了代理时探测经代理发出；未配时行为与从前逐字节一致
+3. **显式 `nil` 是有意的**：`Transport.Proxy == nil` 才是"不走代理"的表达；留空字段会继承环境，这正是最初的缺陷
+4. **配置优先于环境**：配了代理就连 `NO_PROXY` 也不看——用户显式写下的意图不该被环境变量推翻
+5. **非法值报错而非忽略**：scheme 拼错而静默退化成直连，正是这个包要防的那类 bug
+6. **`direct` / `none` / `off` 是显式关断**：全局配了代理时，单服务器可以写 `proxy = "direct"` 强制直连。"继承全局" 与 "强制直连" 是两种不同意图，不能坍缩成同一种写法
+
+```toml
+version = 2
+default_server = "bastion"
+proxy = "socks5://127.0.0.1:1080"   # 全局；缺省即直连
+
+[servers.bastion]
+internal = "http://192.168.1.10:2280/"
+username = "testuser"
+proxy = "direct"                     # 本服务器强制直连，覆盖全局
+```
+
+接受 `http` / `https` / `socks5`（含 user:password）。协议实现自持（`internal/netproxy`），不引入第三方依赖。
 
 ## 7. 可观测性
 

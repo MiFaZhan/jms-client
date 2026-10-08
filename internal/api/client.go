@@ -25,6 +25,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/MiFaZhan/jms-client/internal/netproxy"
 )
 
 // DefaultTimeout is the per-request HTTP timeout (DESIGN.md §4.5).
@@ -90,17 +92,33 @@ type Client struct {
 	csrf   string
 }
 
-// New returns a Client for baseURL. The URL is normalized: whitespace
-// trimmed, trailing slashes removed and https:// assumed when the scheme
-// is missing. The client gets a cookie jar because the Django form login
-// only communicates through cookies.
+// New returns a Client for baseURL that connects directly.
+//
+// The URL is normalized: whitespace trimmed, trailing slashes removed
+// and https:// assumed when the scheme is missing. The client gets a
+// cookie jar because the Django form login only communicates through
+// cookies.
+//
+// The transport is set EXPLICITLY, with Proxy == nil, so the client does
+// not inherit http.DefaultTransport and therefore never reads
+// HTTP_PROXY/HTTPS_PROXY (DESIGN.md §6.1). Leaving the field unset used
+// to make the REST calls honour the environment while every other
+// transport (probe, SSH, SFTP, WebSocket) connected directly — probe and
+// login then measured different networks.
 func New(baseURL string) *Client {
+	return NewWithProxy(baseURL, netproxy.Direct())
+}
+
+// NewWithProxy returns a Client for baseURL that honours the proxy
+// policy. A direct policy (the zero value) connects directly.
+func NewWithProxy(baseURL string, px netproxy.Proxy) *Client {
 	jar, _ := cookiejar.New(nil)
 	return &Client{
 		baseURL: normalizeBaseURL(baseURL),
 		http: &http.Client{
-			Timeout: DefaultTimeout,
-			Jar:     jar,
+			Timeout:   DefaultTimeout,
+			Jar:       jar,
+			Transport: px.Transport(),
 		},
 	}
 }

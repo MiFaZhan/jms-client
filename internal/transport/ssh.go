@@ -102,8 +102,11 @@ func dialSSH(ctx context.Context, sess *auth.Session, asset assets.Info, opts Co
 
 	// DialContext instead of ssh.Dial so the 15s connect bound (a DROP-type
 	// firewall would otherwise hang for 75s, DESIGN.md §4.5) coexists with
-	// ctx cancellation.
-	conn, err := (&net.Dialer{Timeout: DialTimeout}).DialContext(ctx, "tcp", addr)
+	// ctx cancellation. The dialer carries the session's proxy policy so the
+	// KoKo SSH port is reached on the same network path as the login that
+	// produced the session (DESIGN.md §6.1).
+	dial := sess.NetProxy().DialContext(DialTimeout)
+	conn, err := dial(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}

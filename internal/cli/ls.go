@@ -83,7 +83,7 @@ func runLS(cmd *cobra.Command, deps Deps, opts lsOptions) error {
 	}
 
 	ctx := commandContext(cmd)
-	session, sel, err := selectEndpoint(ctx, deps, newPrompter(deps), srv, force, password, secret)
+	session, sel, err := selectEndpoint(ctx, deps, newPrompter(deps), cfg, srv, force, password, secret)
 	if err != nil {
 		return describeEndpointFailure(srv, force, err)
 	}

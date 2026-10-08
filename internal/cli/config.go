@@ -15,6 +15,7 @@ import (
 	"github.com/MiFaZhan/jms-client/internal/auth"
 	"github.com/MiFaZhan/jms-client/internal/config"
 	"github.com/MiFaZhan/jms-client/internal/endpoint"
+	"github.com/MiFaZhan/jms-client/internal/netproxy"
 )
 
 // newConfigCommand builds the `jms config` command group.
@@ -170,7 +171,15 @@ func runConfigAdd(cmd *cobra.Command, deps Deps, alias string, setDefault bool) 
 	}
 
 	ctx := commandContext(cmd)
-	if _, _, err := selectEndpoint(ctx, deps, p, srv, "", password, secret); err != nil {
+	// The configuration is loaded before validation because the proxy policy
+	// it carries decides which network the credential check travels
+	// (DESIGN.md §6.1). A missing file is an empty configuration, which is
+	// the direct policy.
+	cfg, err := loadOrNewConfig(cmd, deps)
+	if err != nil {
+		return err
+	}
+	if _, _, err := selectEndpoint(ctx, deps, p, cfg, srv, "", password, secret); err != nil {
 		return fmt.Errorf("cannot validate the credentials for %q: %w", alias, err)
 	}
 
@@ -184,7 +193,7 @@ func runConfigAdd(cmd *cobra.Command, deps Deps, alias string, setDefault bool) 
 		}
 	}
 
-	cfg, err := loadOrNewConfig(cmd, deps)
+	cfg, err = loadOrNewConfig(cmd, deps)
 	if err != nil {
 		return err
 	}
@@ -365,6 +374,18 @@ func runConfigTest(cmd *cobra.Command, deps Deps, alias string) error {
 	}
 	ctx := commandContext(cmd)
 
+	// The probe follows the server's proxy policy, and so does the login
+	// below: this command exists to report which address actually works, so
+	// both halves have to measure the same network (DESIGN.md §6.1).
+	px, err := netproxy.Parse(cfg.ProxyFor(srv))
+	if err != nil {
+		return fmt.Errorf("server %q: %w", srv.Name, err)
+	}
+	probe := deps.Probe
+	if probe == nil {
+		probe = endpoint.ProbeWith(px)
+	}
+
 	candidates := endpoint.Candidates(srv, "", stateFor(deps, srv))
 	if len(candidates) == 0 {
 		return fmt.Errorf("server %q has no address configured: run `jms config add %s`",
@@ -374,7 +395,7 @@ func runConfigTest(cmd *cobra.Command, deps Deps, alias string) error {
 	probes := make([]endpointProbe, 0, len(candidates))
 	for _, cand := range candidates {
 		started := deps.Now()
-		reachable := deps.Probe(ctx, cand.URL, endpoint.ProbeTimeout)
+		reachable := probe(ctx, cand.URL, endpoint.ProbeTimeout)
 		probes = append(probes, endpointProbe{
 			kind:      cand.Kind,
 			url:       cand.URL,
@@ -410,7 +431,7 @@ func runConfigTest(cmd *cobra.Command, deps Deps, alias string) error {
 			continue
 		}
 		_, err := loginSession(api.WithRetryBudget(ctx, 0), deps, newPrompter(deps), srv,
-			probes[i].url, password, secret)
+			probes[i].url, password, secret, px)
 		probes[i].login = loginOutcome(err)
 		if err != nil && loginErr == nil {
 			loginErr = err

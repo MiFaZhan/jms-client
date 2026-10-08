@@ -39,9 +39,11 @@ func parseCommandTarget(spec string) (commandTarget, error) {
 }
 
 // serverConnection bundles what a pool-backed command needs after target
-// resolution: the server entry and its credentials.
+// resolution: the server entry, its credentials and the configuration
+// that carries the proxy policy.
 type serverConnection struct {
 	deps     Deps
+	cfg      *config.AppConfig
 	srv      *config.ServerConfig
 	password string
 	secret   string
@@ -64,7 +66,7 @@ func resolveCommandTarget(cmd *cobra.Command, deps Deps, t commandTarget) (*serv
 	if err != nil {
 		return nil, err
 	}
-	return &serverConnection{deps: deps, srv: srv, password: password, secret: secret}, nil
+	return &serverConnection{deps: deps, cfg: cfg, srv: srv, password: password, secret: secret}, nil
 }
 
 // connect authenticates and returns the session bound to the chosen
@@ -72,7 +74,7 @@ func resolveCommandTarget(cmd *cobra.Command, deps Deps, t commandTarget) (*serv
 //
 // The endpoint is forced when force is non-empty (DESIGN.md §4.7 point 7).
 func (c *serverConnection) connect(ctx context.Context, force endpoint.Kind) (*auth.Session, endpoint.Kind, error) {
-	session, sel, err := selectEndpoint(ctx, c.deps, newPrompter(c.deps), c.srv, force, c.password, c.secret)
+	session, sel, err := selectEndpoint(ctx, c.deps, newPrompter(c.deps), c.cfg, c.srv, force, c.password, c.secret)
 	if err != nil {
 		return nil, "", describeEndpointFailure(c.srv, force, err)
 	}

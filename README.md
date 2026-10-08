@@ -53,7 +53,27 @@ external = "http://bastion.example.com:2280/" # 外网地址（可缺省）
 username = "testuser"
 # prefer = "internal"                         # 地址偏好，可设 external
 # ssh_port = 2222                             # KoKo SSH 端口
+# proxy = "direct"                            # 本服务器强制直连，覆盖全局 proxy
 ```
+
+### 代理
+
+**默认直连，且不读取 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`。** 堡垒机客户端走本机透明代理几乎总是错的：开发机上这些变量是全局导出的，而代理自身的 `DIRECT` 规则又往往命中堡垒机地址，于是请求经由一个没人要求的代理离开进程，代理自己的错误（典型是空 body 的 502）冒充了真实网络结果。
+
+需要跨代理访问时显式配置（`http` / `https` / `socks5`）：
+
+```toml
+version = 2
+default_server = "bastion"
+proxy = "socks5://127.0.0.1:1080"             # 全局；缺省即直连
+
+[servers.bastion]
+internal = "http://192.168.1.10:2280/"
+username = "testuser"
+proxy = "direct"                              # 本服务器强制直连，覆盖全局
+```
+
+配置优先于环境：配了代理就连 `NO_PROXY` 也不看。内网地址与 `proxy = "direct"` 都不需要额外设置。
 
 ### 凭据
 

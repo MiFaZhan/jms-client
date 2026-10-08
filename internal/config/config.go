@@ -83,7 +83,11 @@ type ServerConfig struct {
 	// Pin, when set to a known address kind, restricts the server to that one
 	// address: no probing of the other, no failover. For a user who knows
 	// which network they are always on, it removes all guessing.
-	Pin     string
+	Pin string
+	// Proxy overrides the global proxy setting for this server. An empty
+	// value inherits it; "direct" forces a direct connection even when a
+	// global proxy is configured.
+	Proxy   string
 	SSHPort int // KoKo SSH port; 0 means DefaultSSHPort
 }
 
@@ -176,6 +180,57 @@ func Validate(s *ServerConfig) error {
 				s.Name, KindInternal, KindExternal, p)
 		}
 	}
+	if p := strings.TrimSpace(s.Proxy); p != "" {
+		if err := validateProxy(p); err != nil {
+			return fmt.Errorf("server %q: %w", s.Name, err)
+		}
+	}
+	return nil
+}
+
+// ProxyOff is the value that explicitly forces a direct connection,
+// overriding a global proxy setting. An empty Proxy means "inherit".
+const ProxyOff = "direct"
+
+// proxyOffAliases are the spellings accepted for ProxyOff.
+var proxyOffAliases = map[string]bool{
+	"direct": true,
+	"none":   true,
+	"off":    true,
+}
+
+// IsProxyOff reports whether a configured proxy value explicitly forces
+// a direct connection rather than inheriting the global setting.
+func IsProxyOff(raw string) bool {
+	return proxyOffAliases[strings.ToLower(strings.TrimSpace(raw))]
+}
+
+// validateProxy checks a proxy URL without importing internal/netproxy:
+// config is a leaf package (DESIGN.md §1 dependency direction) and must
+// not depend on the network layer. The accepted grammar is kept in sync
+// with netproxy.Parse by a test that asserts the two agree.
+//
+// An empty value is accepted and means "direct", matching netproxy.Parse,
+// even though every caller already skips empty values before calling here.
+func validateProxy(raw string) error {
+	if strings.TrimSpace(raw) == "" || IsProxyOff(raw) {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("proxy %q is not a valid URL: %w", raw, err)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https", "socks5", "socks5h":
+	case "":
+		return fmt.Errorf("proxy %q is missing a scheme (use http:// or socks5://)", raw)
+	default:
+		return fmt.Errorf("proxy %q has unsupported scheme %q (use http, https or socks5)",
+			raw, u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("proxy %q is missing a host", raw)
+	}
 	return nil
 }
 
@@ -204,7 +259,28 @@ func validateURL(kind, raw string) error {
 type AppConfig struct {
 	Version float64
 	Default string
+	// Proxy is the global proxy policy: empty (or "direct") means every
+	// connection is made directly, which is the default and never consults
+	// HTTP_PROXY/HTTPS_PROXY (DESIGN.md §6.1).
+	Proxy   string
 	Servers map[string]*ServerConfig
+}
+
+// ProxyFor returns the effective proxy value for a server: the server's
+// own setting when it has one, otherwise the global default.
+//
+// A nil receiver or nil server yields "" (direct), so a caller that has
+// no configuration at all still gets the safe default.
+func (c *AppConfig) ProxyFor(srv *ServerConfig) string {
+	if srv != nil {
+		if own := strings.TrimSpace(srv.Proxy); own != "" {
+			return own
+		}
+	}
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Proxy)
 }
 
 // Names returns every server alias in sorted order. It returns an empty
@@ -279,6 +355,7 @@ func (c *AppConfig) Put(s *ServerConfig) error {
 	s.Internal = strings.TrimSpace(s.Internal)
 	s.External = strings.TrimSpace(s.External)
 	s.Prefer = strings.ToLower(strings.TrimSpace(s.Prefer))
+	s.Proxy = strings.TrimSpace(s.Proxy)
 	if err := Validate(s); err != nil {
 		return err
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/MiFaZhan/jms-client/internal/api"
 	"github.com/MiFaZhan/jms-client/internal/auth"
 	"github.com/MiFaZhan/jms-client/internal/config"
+	"github.com/MiFaZhan/jms-client/internal/netproxy"
 )
 
 // Kind identifies which configured address a candidate came from.
@@ -177,13 +178,39 @@ func Candidates(srv *config.ServerConfig, force Kind, st State) []Candidate {
 
 // TCPProbe is the default ProbeFunc: it dials the candidate's host:port
 // and closes the connection immediately.
+//
+// It dials DIRECTLY. When a proxy is configured, use ProbeWith instead,
+// or the probe and the login that follows it would measure two different
+// networks (DESIGN.md §6.1).
 func TCPProbe(ctx context.Context, rawURL string, timeout time.Duration) bool {
+	return dialProbe(ctx, rawURL, timeout, netproxy.Direct())
+}
+
+// ProbeWith returns a ProbeFunc that reaches the candidate through the
+// given proxy policy.
+//
+// A direct policy returns TCPProbe itself, so the default path is
+// unchanged. This is what keeps the §4.7 failover policy honest: the
+// probe is an accelerator for the login, and it can only accelerate the
+// right thing if it travels the same route.
+func ProbeWith(px netproxy.Proxy) ProbeFunc {
+	if px.IsDirect() {
+		return TCPProbe
+	}
+	return func(ctx context.Context, rawURL string, timeout time.Duration) bool {
+		return dialProbe(ctx, rawURL, timeout, px)
+	}
+}
+
+// dialProbe dials a candidate URL through the given policy and reports
+// reachability.
+func dialProbe(ctx context.Context, rawURL string, timeout time.Duration, px netproxy.Proxy) bool {
 	host, port, err := hostPort(rawURL)
 	if err != nil {
 		return false
 	}
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
+	dial := px.DialContext(timeout)
+	conn, err := dial(ctx, "tcp", net.JoinHostPort(host, port))
 	if err != nil {
 		return false
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/MiFaZhan/jms-client/internal/auth"
 	"github.com/MiFaZhan/jms-client/internal/config"
 	"github.com/MiFaZhan/jms-client/internal/endpoint"
+	"github.com/MiFaZhan/jms-client/internal/netproxy"
 )
 
 // processArgs is indirected so tests can supply an argument list.
@@ -98,26 +99,41 @@ func stateFor(deps Deps, srv *config.ServerConfig) endpoint.State {
 //
 // This is the single seam through which the CLI reaches the
 // authentication layer: Deps.Login replaces it in tests, otherwise the
-// real auth.Login performs the dual login with the given credential.
+// real auth.LoginWithProxy performs the dual login with the given
+// credential and proxy policy.
 func loginSession(ctx context.Context, deps Deps, p *prompter, srv *config.ServerConfig,
-	baseURL, password, secret string) (*auth.Session, error) {
+	baseURL, password, secret string, px netproxy.Proxy) (*auth.Session, error) {
 
 	if deps.Login != nil {
 		return deps.Login(ctx, srv, baseURL)
 	}
-	return auth.Login(ctx, srv, baseURL,
-		auth.Credentials{Password: password, OTPSecret: secret}, p.otp)
+	return auth.LoginWithProxy(ctx, srv, baseURL,
+		auth.Credentials{Password: password, OTPSecret: secret}, p.otp, px)
 }
 
 // selectEndpoint picks an address under the failover policy of
 // DESIGN.md §4.7 and authenticates against it.
 //
+// The probe and the login share one proxy policy (DESIGN.md §6.1): the
+// probe is only an accelerator for the login, so it has to travel the
+// same route. A server with no proxy configured gets the direct policy,
+// which is also what every transport used before this existed.
+//
 // The returned session is the one the login actually produced, so callers
 // must use its Client instead of rebuilding a client from the selected
 // URL — a test seam that answers with a client pointing elsewhere would
 // otherwise be ignored.
-func selectEndpoint(ctx context.Context, deps Deps, p *prompter, srv *config.ServerConfig,
-	force endpoint.Kind, password, secret string) (*auth.Session, endpoint.Selection, error) {
+func selectEndpoint(ctx context.Context, deps Deps, p *prompter, cfg *config.AppConfig,
+	srv *config.ServerConfig, force endpoint.Kind, password, secret string) (*auth.Session, endpoint.Selection, error) {
+
+	px, err := netproxy.Parse(cfg.ProxyFor(srv))
+	if err != nil {
+		return nil, endpoint.Selection{}, fmt.Errorf("server %q: %w", srv.Name, err)
+	}
+	probe := deps.Probe
+	if probe == nil {
+		probe = endpoint.ProbeWith(px)
+	}
 
 	var session *auth.Session
 	login := func(ctx context.Context, cand endpoint.Candidate) error {
@@ -125,7 +141,7 @@ func selectEndpoint(ctx context.Context, deps Deps, p *prompter, srv *config.Ser
 		// retry budget so a server that answers 502 after a stall does not
 		// turn one probe into the full retry schedule (measured at ~24s on a
 		// Tailscale-intercepted address).
-		s, err := loginSession(api.WithRetryBudget(ctx, 0), deps, p, srv, cand.URL, password, secret)
+		s, err := loginSession(api.WithRetryBudget(ctx, 0), deps, p, srv, cand.URL, password, secret, px)
 		if err != nil {
 			return err
 		}
@@ -133,7 +149,7 @@ func selectEndpoint(ctx context.Context, deps Deps, p *prompter, srv *config.Ser
 		return nil
 	}
 
-	sel, err := endpoint.SelectAndLogin(ctx, srv, force, deps.Probe, login, deps.State)
+	sel, err := endpoint.SelectAndLogin(ctx, srv, force, probe, login, deps.State)
 	if err != nil {
 		return nil, endpoint.Selection{}, err
 	}

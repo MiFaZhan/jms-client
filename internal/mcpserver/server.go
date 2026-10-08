@@ -25,6 +25,7 @@ import (
 	"github.com/MiFaZhan/jms-client/internal/config"
 	"github.com/MiFaZhan/jms-client/internal/connpool"
 	"github.com/MiFaZhan/jms-client/internal/endpoint"
+	"github.com/MiFaZhan/jms-client/internal/netproxy"
 	"github.com/MiFaZhan/jms-client/internal/obs"
 	"github.com/MiFaZhan/jms-client/internal/transport"
 	"github.com/MiFaZhan/jms-client/internal/xfer"
@@ -144,7 +145,8 @@ type Options struct {
 	// Sessions pool with credentials from Creds.
 	Session SessionFunc
 	// Probe checks address reachability during endpoint selection. Nil means
-	// endpoint.TCPProbe; a test can inject a fake to avoid real dials.
+	// endpoint.ProbeWith, which honours the server's configured proxy policy
+	// (DESIGN.md §6.1); a test can inject a fake to avoid real dials.
 	Probe endpoint.ProbeFunc
 	// state reads the persisted last-good endpoint for a server alias.
 	// Nil means a file store next to the configuration file.
@@ -405,6 +407,20 @@ func (s *Server) sessionFor(ctx context.Context, serverName, configPath string) 
 	// process for many calls, so the recorded last-good address would drift
 	// from the CLI's without this - an internal address that answers 502
 	// would otherwise be retried forever just because config.toml prefers it.
+	//
+	// The probe and the login below share one proxy policy (DESIGN.md §6.1).
+	// Probing directly while logging in through a proxy would let the two
+	// observe different networks, and §4.7's failover would then act on the
+	// wrong one.
+	px, err := netproxy.Parse(cfg.ProxyFor(srv))
+	if err != nil {
+		return nil, nil, fmt.Errorf("server %q: %w", srv.Name, err)
+	}
+	probe := s.opts.Probe
+	if probe == nil {
+		probe = endpoint.ProbeWith(px)
+	}
+
 	st, _ := s.state(srv.Name).Get(srv.Name)
 	candidates := endpoint.Candidates(srv, "", st)
 	if len(candidates) == 0 {
@@ -423,14 +439,14 @@ func (s *Server) sessionFor(ctx context.Context, serverName, configPath string) 
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()
 		}
-		if s.opts.Probe != nil && !s.opts.Probe(ctx, cand.URL, endpoint.ProbeTimeout) {
+		if probe != nil && !probe(ctx, cand.URL, endpoint.ProbeTimeout) {
 			// The probe is an accelerator, not a verdict: remember that this
 			// candidate was skipped so the last one still gets a full login
 			// attempt (§4.7, §11.9).
 			loginErr = fmt.Errorf("probe failed for %s address %s", cand.Kind, cand.URL)
 			continue
 		}
-		sess, loginErr = s.opts.Sessions.Get(ctx, srv, cand.URL, creds, s.opts.OTPPrompt)
+		sess, loginErr = s.opts.Sessions.GetWithProxy(ctx, srv, cand.URL, creds, s.opts.OTPPrompt, px)
 		if loginErr == nil {
 			return sess, srv, nil
 		}
