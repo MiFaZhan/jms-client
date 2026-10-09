@@ -111,9 +111,15 @@ jobs:
       # mcp-publisher is not on any package manager; the registry documents a
       # release binary. Pinned by version so a change upstream cannot alter a
       # release mid-flight.
+      #
+      # v1.8.1 or newer is required: earlier releases hardcoded the OIDC
+      # audience as "mcp-registry", while the registry validates
+      # "https://registry.modelcontextprotocol.io", so `login github-oidc`
+      # failed with "invalid audience" and no release below v1.8.0 works.
+      # v1.8.1 derives the audience from the registry URL instead.
       - name: Install mcp-publisher
         env:
-          MCP_PUBLISHER_VERSION: v1.4.0
+          MCP_PUBLISHER_VERSION: v1.8.1
         run: |
           set -euo pipefail
           url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
