@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "jms-client",
   "display_name": "JumpServer Bastion (jms)",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Run commands, transfer files and browse assets on a JumpServer v4 bastion from your AI assistant.",
   "long_description": "Access the assets behind a [JumpServer v4](https://docs.jumpserver.org/zh/v4/) bastion host: list what you are authorized to reach, run commands, and move files over SFTP.\n\n**This bundle is self-contained and works on macOS, Linux and Windows, on both Intel/AMD (x86_64) and ARM (arm64).** It carries a prebuilt binary for each of those six combinations, and the launcher picks the right one when the server starts — no Go toolchain, no separate download, nothing to choose at install time.\n\nConnections are pooled, so one login serves many commands instead of re-authenticating per call. A server may define both an internal and an external address, and the tool picks whichever is reachable, so the same configuration works inside and outside the office network.\n\nCredentials are never written to the configuration file: the password and TOTP secret live in the operating system credential store (Windows Credential Manager, macOS Keychain, or Linux Secret Service). Run `jms config add <alias>` once to store them.\n\nEverything the assistant executes is also written to a local JSONL audit stream, which you can follow with `jms tail` or join interactively with `jms attach`.",
   "author": {
