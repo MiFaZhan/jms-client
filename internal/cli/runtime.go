@@ -197,16 +197,23 @@ func defaultAuditDir(d Deps) string {
 	return filepath.Join(dir, "audit")
 }
 
-// defaultActor names this process in the audit stream.
+// defaultActor names the CLI in the audit stream.
 //
-// JMS_ACTOR overrides it, which is how one machine's several clients stay
-// distinguishable in a shared audit file. The fallback names the CLI, which
-// is the surface every non-MCP command runs on.
-func defaultActor() string {
+// The surface is part of the name because the audit log is read to tell which
+// surface ran what: `jms mcp` resolves its own actor before it publishes
+// anything, so an event never inherits the CLI's name just because the
+// Runtime was built first (DESIGN.md「审计日志」).
+func defaultActor() string { return actorFor("cli") }
+
+// actorFor resolves the audit actor for one surface.
+//
+// JMS_ACTOR wins, which is how several clients on one machine stay
+// distinguishable in a shared audit file; otherwise the surface names itself.
+func actorFor(surface string) string {
 	if v := strings.TrimSpace(os.Getenv(actorEnv)); v != "" {
 		return v
 	}
-	return "cli"
+	return surface
 }
 
 // actorEnv is the environment variable that overrides the audit actor.

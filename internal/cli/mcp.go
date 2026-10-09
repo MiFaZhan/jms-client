@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -71,6 +69,12 @@ func (h *hostHandle) Close() error {
 // 「连接池」3.2, 「审计日志」).
 func runMCP(cmd *cobra.Command, deps Deps) error {
 	ctx := commandContext(cmd)
+
+	// The Runtime was built before the command was known, so it carries the
+	// CLI's actor. Retitle it here: every event this host publishes — pool
+	// transitions included — must be attributed to the MCP surface, or the log
+	// claims a command line was involved when only an AI client was.
+	deps.Runtime.Actor = mcpActor()
 
 	if err := deps.Runtime.AuditErr; err != nil {
 		fmt.Fprintf(deps.Err, "Warning: audit log unavailable: %v\n", err)
@@ -182,7 +186,7 @@ func mcpOptions(deps Deps) mcpserver.Options {
 	return mcpserver.Options{
 		ConfigPath: deps.ConfigPath,
 		Version:    effectiveVersion(),
-		Actor:      mcpActor(deps),
+		Actor:      deps.Runtime.Actor,
 		Bus:        deps.Runtime.Bus,
 		Sessions:   deps.Runtime.Sessions,
 		Terminals:  deps.Runtime.Terminals,
@@ -194,17 +198,9 @@ func mcpOptions(deps Deps) mcpserver.Options {
 	}
 }
 
-// mcpActor names this process in the audit stream, so a reader of the log can
+// mcpActor names the MCP host in the audit stream, so a reader of the log can
 // tell which client ran what (DESIGN.md「审计日志」).
 //
-// JMS_ACTOR overrides it, and the Runtime's actor is the fallback: the
-// runtime resolved the same variable when it built the bus.
-func mcpActor(deps Deps) string {
-	if v := strings.TrimSpace(os.Getenv(actorEnv)); v != "" {
-		return v
-	}
-	if deps.Runtime != nil && deps.Runtime.Actor != "" {
-		return deps.Runtime.Actor
-	}
-	return "mcp"
-}
+// JMS_ACTOR wins, which is how several clients on one machine stay
+// distinguishable in a shared audit file.
+func mcpActor() string { return actorFor("mcp") }

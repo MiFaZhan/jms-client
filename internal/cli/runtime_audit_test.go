@@ -14,6 +14,7 @@ import (
 	"github.com/MiFaZhan/jms-client/internal/auth"
 	"github.com/MiFaZhan/jms-client/internal/config"
 	"github.com/MiFaZhan/jms-client/internal/connpool"
+	"github.com/MiFaZhan/jms-client/internal/mcpserver"
 	"github.com/MiFaZhan/jms-client/internal/obs"
 	"github.com/MiFaZhan/jms-client/internal/transport"
 )
@@ -209,6 +210,11 @@ func TestOneShotCommandFlushesItsAuditEvents(t *testing.T) {
 	if events[0].Kind != obs.KindPoolHit {
 		t.Errorf("event kind = %q, want %q", events[0].Kind, obs.KindPoolHit)
 	}
+	// A command run from the shell is the CLI surface, and the audit log is
+	// read to tell the surfaces apart.
+	if events[0].Actor != "cli" {
+		t.Errorf("event actor = %q, want %q", events[0].Actor, "cli")
+	}
 }
 
 // TestReadOnlyCommandLeavesNoAuditFile keeps the fix from trading one problem
@@ -373,4 +379,66 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool, msg string) 
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal(msg)
+}
+
+// TestMCPHostLabelsItsEventsAsMCP is the regression for an actor bug this
+// change introduced: the Runtime defaults its actor to "cli", and mcpActor
+// preferred that over its own "mcp" fallback, so every event a real MCP host
+// wrote was attributed to the CLI. The audit log is read to tell which
+// surface ran what, so a host that calls itself "cli" makes the log lie
+// (DESIGN.md「审计日志」).
+func TestMCPHostLabelsItsEventsAsMCP(t *testing.T) {
+	t.Setenv(actorEnv, "")
+	env := newCLIEnv(t)
+	dir := auditDirFor(t, env)
+
+	var got mcpserver.Options
+	env.serveMCPFn = func(_ context.Context, opts mcpserver.Options) error {
+		got = opts
+		return nil
+	}
+	if code := env.run("mcp"); code != 0 {
+		t.Fatalf("mcp exit code = %d, want 0 (stderr: %s)", code, env.stderr())
+	}
+	if got.Actor != "mcp" {
+		t.Errorf("MCP host actor = %q, want %q", got.Actor, "mcp")
+	}
+
+	// The events the host publishes must carry the same actor, not the
+	// runtime's CLI default.
+	deps := env.deps().WithDefaults()
+	if deps.Runtime.Actor == "" {
+		t.Fatal("Runtime.Actor is empty")
+	}
+	deps.Runtime.Terminals.Notify(connpool.Event{Kind: connpool.KindHit, Server: "s", Asset: "a"})
+	if err := deps.Runtime.Close(); err != nil {
+		t.Fatalf("Runtime.Close: %v", err)
+	}
+	for _, e := range auditEventsIn(t, dir) {
+		if e.Kind == obs.KindPoolHit && e.Actor != "mcp" {
+			t.Errorf("pool event actor = %q, want %q", e.Actor, "mcp")
+		}
+	}
+}
+
+// TestActorEnvOverridesBothSurfaces keeps JMS_ACTOR authoritative: it is how
+// several clients on one machine stay distinguishable.
+func TestActorEnvOverridesBothSurfaces(t *testing.T) {
+	t.Setenv(actorEnv, "mcp:pi")
+	env := newCLIEnv(t)
+
+	var got mcpserver.Options
+	env.serveMCPFn = func(_ context.Context, opts mcpserver.Options) error {
+		got = opts
+		return nil
+	}
+	if code := env.run("mcp"); code != 0 {
+		t.Fatalf("mcp exit code = %d, want 0", code)
+	}
+	if got.Actor != "mcp:pi" {
+		t.Errorf("MCP actor = %q, want the JMS_ACTOR override %q", got.Actor, "mcp:pi")
+	}
+	if a := env.deps().WithDefaults().Runtime.Actor; a != "mcp:pi" {
+		t.Errorf("Runtime.Actor = %q, want %q", a, "mcp:pi")
+	}
 }

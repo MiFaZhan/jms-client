@@ -524,10 +524,12 @@ func (w *AuditWriter) Path() string {
 type AuditSink struct {
 	opts AuditOptions
 
-	mu      sync.Mutex
-	writer  *AuditWriter
-	opened  bool
-	openErr error
+	mu       sync.Mutex
+	writer   *AuditWriter
+	opened   bool
+	closed   bool
+	openErr  error
+	closeErr error
 }
 
 // NewAuditSink validates the audit location and returns a sink that will
@@ -587,12 +589,18 @@ func resolveAuditOptions(opts AuditOptions) AuditOptions {
 }
 
 // Publish implements Subscriber, opening the file on the first event.
+//
+// A publish that arrives after Close is dropped: Close is terminal, and
+// reopening here would leave a file no one closes.
 func (s *AuditSink) Publish(e Event) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
 	if !s.opened {
 		s.opened = true
 		// The directory is created here as well as in Prepare, because a
@@ -634,16 +642,26 @@ func (s *AuditSink) prepareLocked() error {
 }
 
 // Close flushes and closes the file, reporting any failure.
+//
+// It is terminal and idempotent: every later call reports the first outcome,
+// and a publish that arrives afterwards is dropped rather than reopening a
+// file no one would close.
 func (s *AuditSink) Close() error {
 	if s == nil {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.openErr != nil {
-		return s.openErr
+	if s.closed {
+		return s.closeErr
 	}
-	return s.writer.Close()
+	s.closed = true
+	if s.openErr != nil {
+		s.closeErr = s.openErr
+		return s.closeErr
+	}
+	s.closeErr = s.writer.Close()
+	return s.closeErr
 }
 
 // Path returns the file path, or "" when it was never opened.
