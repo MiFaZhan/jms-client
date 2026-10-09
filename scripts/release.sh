@@ -103,6 +103,15 @@ command -v goreleaser >/dev/null 2>&1 || fail "goreleaser is not on PATH"
 command -v gh >/dev/null 2>&1 || fail "gh is not on PATH"
 command -v python >/dev/null 2>&1 || fail "python is not on PATH"
 
+# Checked here rather than at the registry step: that step runs after the tag is
+# pushed and the release is public, so discovering a missing tool there leaves a
+# published release with no registry record. A dry run does not publish, so it
+# does not need it.
+if ! $dry_run && ! $keep_draft; then
+    command -v mcp-publisher >/dev/null 2>&1 || \
+        fail "mcp-publisher is not on PATH; the registry record cannot be published"
+fi
+
 echo "  tag=$tag  version=$version  branch=$branch  dry_run=$dry_run"
 
 # ---------------------------------------------------------------------------
@@ -290,15 +299,78 @@ for s in d.get('servers', []):
 "
 }
 
-sleep 5
-reg_sha=$(registry_sha_for_version)
+# registry_sha_wait polls until the record for this version is readable.
+#
+# The registry is read-replicated, so a record that was just published is not
+# necessarily visible to the very next query. Reading once turns a successful
+# publish into a reported failure, which is worse than being slow: it invites
+# a retry that publishes the same version twice. The wait is what makes the
+# check trustworthy rather than merely fast.
+registry_sha_wait() {
+    local attempts=${1:-6} sha
+    for _ in $(seq 1 "$attempts"); do
+        sha=$(registry_sha_for_version)
+        if [ -n "$sha" ]; then
+            printf '%s' "$sha"
+            return 0
+        fi
+        sleep 5
+    done
+    printf ''
+}
+
+# publish_registry_record publishes mcpb/server.json, surviving an expired
+# token.
+#
+# mcp-publisher's JWT is short-lived: it lasts about a day, so the first
+# release after a pause fails with
+#
+#   401 Invalid or expired Registry JWT token
+#      failed to parse token: token has invalid claims: token is expired
+#
+# That is a routine expiry rather than a broken credential, and `gh` already
+# holds a token that can mint a new one, so the recovery belongs here instead
+# of becoming a manual step in the middle of a release. This is not
+# hypothetical: v0.1.2 failed exactly here and shipped without a registry
+# record.
+#
+publish_registry_record() {
+    local out
+    if out=$( cd mcpb && mcp-publisher publish 2>&1 ); then
+        printf '%s\n' "$out"
+        return 0
+    fi
+    printf '%s\n' "$out"
+
+    # Only an expiry is worth retrying. A 403 from a namespace mismatch or a
+    # network failure is not fixed by logging in again, and swallowing those
+    # would hide the real error behind a second failed attempt.
+    case $out in
+        *"Invalid or expired Registry JWT token"*|*"token is expired"*)
+            echo "  the registry token expired; re-authenticating with gh"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    if ! mcp-publisher login github --token "$(gh auth token)" >/dev/null 2>&1; then
+        echo "  re-authentication failed" >&2
+        return 1
+    fi
+    echo "  re-authenticated; publishing again"
+    ( cd mcpb && mcp-publisher publish )
+}
+
+# The record usually exists only after publishing, but a re-run of a release
+# that got this far will find it, so try the read first.
+reg_sha=$(registry_sha_wait 3)
 
 if [ -z "$reg_sha" ]; then
     if command -v mcp-publisher >/dev/null 2>&1; then
         echo "  no registry record for $version yet; publishing"
-        ( cd mcpb && mcp-publisher publish )
-        sleep 5
-        reg_sha=$(registry_sha_for_version)
+        publish_registry_record || fail "publishing the registry record for $version failed"
+        reg_sha=$(registry_sha_wait 6)
     else
         fail "mcp-publisher is not on PATH, so the registry record for $version cannot be published"
     fi
