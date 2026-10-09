@@ -114,6 +114,66 @@ step "Running the test suite"
 # 24 MB bundle is assembled.
 go test ./...
 
+# ---------------------------------------------------------------------------
+# Version stamp
+# ---------------------------------------------------------------------------
+#
+# The MCPB manifest is packed into the bundle and the registry record names
+# the version, so both must carry the version being released BEFORE the tag is
+# created. A tag is immutable, so stamping afterwards leaves the release's own
+# bundle declaring the previous version — which is exactly what v0.1.2
+# shipped: a 0.1.2 archive whose manifest said 0.1.1 and whose registry record
+# pointed at the v0.1.1 download.
+#
+# Committing it here also keeps the tree clean, which the preflight of the
+# NEXT release requires.
+step "Stamping version $version into the MCPB manifests"
+python - "$version" <<'PY'
+import re, sys
+
+version = sys.argv[1]
+
+for path in ("mcpb/manifest.json", "mcpb/server.json"):
+    with open(path, encoding="utf-8", newline="") as fh:
+        text = fh.read()
+    updated, n = re.subn(r'("version":\s*")[^"]+(")',
+                         rf'\g<1>{version}\g<2>', text, count=1)
+    if n != 1:
+        sys.exit(f"expected exactly one version field in {path}, found {n}")
+    # newline="" keeps the file's existing line endings: Python's default
+    # text mode would rewrite every \n as \r\n on Windows, and the tree pins
+    # these files to LF.
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(updated)
+
+# The registry record must point at the bundle of THIS version, or a client
+# that installs it downloads the previous release.
+path = "mcpb/server.json"
+with open(path, encoding="utf-8", newline="") as fh:
+    text = fh.read()
+updated, n = re.subn(r'(releases/download/)v[0-9][^"/]*(/jms-client\.mcpb)',
+                     rf'\g<1>v{version}\g<2>', text)
+if n != 1:
+    sys.exit(f"expected exactly one bundle URL in {path}, found {n}")
+with open(path, "w", encoding="utf-8", newline="") as fh:
+    fh.write(updated)
+print(f"  stamped {version} into mcpb/manifest.json and mcpb/server.json")
+PY
+
+if $dry_run; then
+    # A dry run must leave the tree exactly as it found it, so it can be
+    # repeated without polluting the next real release.
+    git checkout -- mcpb/manifest.json mcpb/server.json
+    echo "  dry run: stamp reverted, the tree is unchanged"
+elif [ -n "$(git status --porcelain mcpb/manifest.json mcpb/server.json)" ]; then
+    git add mcpb/manifest.json mcpb/server.json
+    git commit -q -m "release: bump the MCPB manifest and registry record to $version"
+    git push --quiet origin main
+    echo "  committed and pushed the version bump"
+else
+    echo "  manifests already at $version; nothing to commit"
+fi
+
 if $dry_run; then
     step "Building (dry run, no publish)"
     goreleaser release --clean --snapshot --skip=publish --skip=validate
@@ -141,13 +201,25 @@ fi
 
 step "Packing the MCPB bundle"
 # WRITE_SERVER_JSON rewrites the fileSha256 in mcpb/server.json, which only
-# makes sense once the bundle is really going to be uploaded.
+# makes sense once the bundle is really going to be uploaded. The version was
+# already stamped and committed above, before the tag.
 if $dry_run; then
     bundle_sha=$(WRITE_SERVER_JSON=0 bash scripts/build-mcpb.sh --use-dist 2>/dev/null | tail -1)
 else
     bundle_sha=$(WRITE_SERVER_JSON=1 bash scripts/build-mcpb.sh --use-dist 2>/dev/null | tail -1)
 fi
 echo "  bundle sha256: $bundle_sha"
+
+if ! $dry_run && [ -n "$(git status --porcelain mcpb/server.json)" ]; then
+    # The hash cannot be known before the binaries exist, so unlike the
+    # version it can only be recorded after the tag. Committing it keeps the
+    # tree clean for the next release's preflight, which refuses to start on a
+    # dirty tree. The registry reads the working-tree file, not the tag.
+    git add mcpb/server.json
+    git commit -q -m "release: record the $tag bundle hash"
+    git push --quiet origin main
+    echo "  committed and pushed the bundle hash"
+fi
 
 # ---------------------------------------------------------------------------
 # Publish and verify
@@ -156,7 +228,7 @@ echo "  bundle sha256: $bundle_sha"
 if $dry_run; then
     step "Dry run complete"
     echo "  artifacts in dist/, nothing was published"
-    echo "  server.json was left untouched"
+    echo "  mcpb/manifest.json and mcpb/server.json were left untouched"
     exit 0
 fi
 

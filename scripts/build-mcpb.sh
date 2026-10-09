@@ -19,7 +19,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$(pwd)
 
-version=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
+# The version comes from the tag being released, so the manifest, the
+# registry record and the binaries cannot disagree. RELEASE_VERSION lets a
+# dry run name a version without a tag existing yet.
+version="${RELEASE_VERSION:-}"
+if [ -z "$version" ]; then
+    version=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
+fi
 if [ -z "$version" ]; then
     version=$(grep -oE '"version": *"[^"]+"' mcpb/manifest.json | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
     echo "build-mcpb: no git tag found, using manifest version $version" >&2
@@ -42,6 +48,37 @@ targets=(
 
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
+
+# Stamp the version before anything is copied into the bundle. The manifest is
+# packed into the archive, so stamping it after the copy would leave the
+# bundle declaring the previous version — which is exactly what shipped as
+# v0.1.2.
+stamp_manifest() {
+    python - "$version" <<'PY'
+import re, sys
+
+version = sys.argv[1]
+path = "mcpb/manifest.json"
+with open(path, encoding="utf-8", newline="") as fh:
+    text = fh.read()
+updated, n = re.subn(r'("version":\s*")[^"]+(")', rf'\g<1>{version}\g<2>', text, count=1)
+if n != 1:
+    sys.exit(f"expected exactly one version field in {path}, found {n}")
+# newline="" keeps the file's existing line endings: Python's default text
+# mode would rewrite every \n as \r\n on Windows, which is how an earlier
+# version of this script turned a file CRLF and made it inconsistent with
+# the rest of the tree.
+with open(path, "w", encoding="utf-8", newline="") as fh:
+    fh.write(updated)
+print(f"build-mcpb: stamped version {version} into {path}", file=sys.stderr)
+PY
+}
+
+# Only a real release rewrites the tracked manifests; a dry run must leave the
+# tree clean so it can be repeated.
+if [ "${WRITE_SERVER_JSON:-0}" = "1" ]; then
+    stamp_manifest
+fi
 
 mkdir -p "$stage/server"
 cp mcpb/manifest.json "$stage/manifest.json"
@@ -147,11 +184,19 @@ print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())
 # and its real path (it distinguishes them with WRITE_SERVER_JSON), so that
 # clause made the rewrite unreachable and every release would have shipped a
 # server.json whose fileSha256 named the previous bundle.
+#
+# The version and the download URL are rewritten together with the hash.
+# They used to be bumped by hand in a separate commit, which is a step a
+# release can silently skip: v0.1.2 shipped a bundle whose manifest still
+# said 0.1.1 and whose registry record still pointed at the v0.1.1 download,
+# so the new release was unreachable through the registry. The manifest was
+# already stamped above, before it was copied into the bundle.
 if [ "${WRITE_SERVER_JSON:-0}" = "1" ]; then
-    python - "$sha" <<'PY'
-import json, re, sys
+    python - "$sha" "$version" <<'PY'
+import re, sys
 
-sha = sys.argv[1]
+sha, version = sys.argv[1], sys.argv[2]
+
 path = "mcpb/server.json"
 with open(path, encoding="utf-8", newline="") as fh:
     text = fh.read()
@@ -160,13 +205,25 @@ with open(path, encoding="utf-8", newline="") as fh:
 updated, n = re.subn(r'("fileSha256":\s*")[0-9a-f]{64}(")', rf'\g<1>{sha}\g<2>', text)
 if n != 1:
     sys.exit(f"expected exactly one fileSha256 field in {path}, found {n}")
+text = updated
+# The registry record must name this version and this bundle, or a client
+# that installs it downloads the previous release.
+updated, n = re.subn(r'("version":\s*")[^"]+(")', rf'\g<1>{version}\g<2>', text, count=1)
+if n != 1:
+    sys.exit(f"expected exactly one version field in {path}, found {n}")
+text = updated
+updated, n = re.subn(
+    r'(releases/download/)v[0-9][^"/]*(/jms-client\.mcpb)',
+    rf'\g<1>v{version}\g<2>', text)
+if n != 1:
+    sys.exit(f"expected exactly one bundle URL in {path}, found {n}")
 # newline="" keeps the file's existing line endings: Python's default text
 # mode would rewrite every \n as \r\n on Windows, which is how an earlier
 # version of this script turned the file CRLF and made it inconsistent with
 # the rest of the tree.
 with open(path, "w", encoding="utf-8", newline="") as fh:
     fh.write(updated)
-print(f"build-mcpb: updated {path} with the new hash", file=sys.stderr)
+print(f"build-mcpb: stamped version {version} and the new hash into mcpb/manifest.json and mcpb/server.json", file=sys.stderr)
 PY
 fi
 
