@@ -95,6 +95,16 @@ case "$1" in
       [ "$prev" = "--token" ] && token=$arg
       prev=$arg
     done
+    if [ "$1" = "login" ] && [ "$2" = "github-oidc" ]; then
+      # CI path: OIDC needs no token argument. OIDC_LOGIN_FAILS lets a test
+      # exercise the failure.
+      if [ "${OIDC_LOGIN_FAILS:-0}" = "1" ]; then
+        echo "gathering OIDC token failed" >&2
+        exit 1
+      fi
+      echo "✓ Successfully logged in with OIDC"
+      exit 0
+    fi
     # An empty token means gh could not mint one, so login must fail.
     if [ -z "$token" ] || [ "${PUBLISH_MODE:-ok}" = "login-fails" ]; then
       echo "device flow failed" >&2
@@ -226,6 +236,52 @@ assert_case "403 namespace mismatch: no retry"         forbidden       1 0 1
 assert_case "still expired after re-login: fail"       expired-always  1 1 2
 stub_gh_fail
 assert_case "re-login fails: surface the failure"      expired-then-ok 1 1 1
+
+# oidc_case drives one publish attempt with MCP_PUBLISHER_OIDC=$1, and reports
+# through its exit status rather than stdout.
+#
+# An earlier version returned "rc|output|log" and split that with `cut`, which
+# is wrong for a multi-line value: cut prints the first field of *every* line,
+# so the comparator saw the error text as well as the status and the OIDC
+# cases reported failure even when the recovery had worked.
+#
+# gh_state decides whether the stored-credential path is usable, because the
+# two re-authentication paths have opposite expectations of it: the OIDC path
+# must work with no gh credential at all, and the gh path needs one.
+oidc_case() {
+    local want=$1 oidc_fails=$2 gh_state=${3:-fail}
+    : > "$work/publish.log"
+    export PUBLISH_MODE=expired-then-ok PUBLISH_LOG="$work/publish.log"
+    export MCP_PUBLISHER_OIDC="$want" OIDC_LOGIN_FAILS="$oidc_fails"
+    if [ "$gh_state" = "ok" ]; then stub_gh_ok; else stub_gh_fail; fi
+    publish_registry_record >/dev/null 2>&1
+    local rc=$?
+    unset MCP_PUBLISHER_OIDC OIDC_LOGIN_FAILS
+    return $rc
+}
+
+# CI authenticates with OIDC, not a stored gh token; these cases pin that.
+if oidc_case 1 0 fail && grep -q 'login github-oidc' "$work/publish.log"; then
+    printf '  ok   OIDC path re-authenticates without gh\n'
+else
+    printf '  FAIL OIDC path did not recover (log: %s)\n' \
+        "$(tr '\n' ' ' < "$work/publish.log")"
+    failures=$((failures + 1))
+fi
+if oidc_case 1 1 fail; then
+    printf '  FAIL OIDC login failure was swallowed\n'
+    failures=$((failures + 1))
+else
+    printf '  ok   OIDC login failure is surfaced\n'
+fi
+if oidc_case 0 0 ok && grep -q 'login github --token' "$work/publish.log"; then
+    printf '  ok   without the OIDC flag it uses the gh token\n'
+else
+    printf '  FAIL the gh fallback path is broken (log: %s)\n' \
+        "$(tr '\n' ' ' < "$work/publish.log")"
+    failures=$((failures + 1))
+fi
+stub_gh_ok
 
 # The login must receive the token from gh, not prompt interactively.
 : > "$work/publish.log"

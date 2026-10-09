@@ -196,7 +196,11 @@ else
     # second build produces different bytes and every hash recorded in the
     # first run stops matching. The Scoop manifest is generated from the
     # same run for exactly this reason.
-    GITHUB_TOKEN=$(gh auth token) goreleaser release --clean
+    #
+    # GITHUB_TOKEN comes from the environment in CI; locally it is read from
+    # gh's keyring. Preferring the environment keeps the CI path free of a
+    # `gh auth` dependency, and gh itself is what fills it in locally.
+    GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token)}" goreleaser release --clean
 fi
 
 # ---------------------------------------------------------------------------
@@ -334,6 +338,10 @@ registry_sha_wait() {
 # hypothetical: v0.1.2 failed exactly here and shipped without a registry
 # record.
 #
+# In GitHub Actions there is no stored `gh` credential to read; the workflow
+# authenticates with OIDC instead, whose token is minted per run and cannot
+# expire mid-release. MCP_PUBLISHER_OIDC=1 selects that path.
+#
 publish_registry_record() {
     local out
     if out=$( cd mcpb && mcp-publisher publish 2>&1 ); then
@@ -346,17 +354,26 @@ publish_registry_record() {
     # network failure is not fixed by logging in again, and swallowing those
     # would hide the real error behind a second failed attempt.
     case $out in
-        *"Invalid or expired Registry JWT token"*|*"token is expired"*)
-            echo "  the registry token expired; re-authenticating with gh"
+        *"Invalid or expired Registry JWT token"*|*"token is expired"*|*"not logged in"*|*"no authentication"*)
+            echo "  the registry needs authentication; re-authenticating"
             ;;
         *)
             return 1
             ;;
     esac
 
-    if ! mcp-publisher login github --token "$(gh auth token)" >/dev/null 2>&1; then
-        echo "  re-authentication failed" >&2
-        return 1
+    if [ "${MCP_PUBLISHER_OIDC:-0}" = "1" ]; then
+        # GitHub Actions: exchange the workflow's OIDC identity for a registry
+        # token. Requires `id-token: write` on the job.
+        if ! mcp-publisher login github-oidc >/dev/null 2>&1; then
+            echo "  OIDC re-authentication failed" >&2
+            return 1
+        fi
+    else
+        if ! mcp-publisher login github --token "$(gh auth token)" >/dev/null 2>&1; then
+            echo "  re-authentication failed" >&2
+            return 1
+        fi
     fi
     echo "  re-authenticated; publishing again"
     ( cd mcpb && mcp-publisher publish )
@@ -395,15 +412,72 @@ for _ in 1 2 3 4 5 6; do
     sleep 5
 done
 
+# ---------------------------------------------------------------------------
+# Scoop bucket
+# ---------------------------------------------------------------------------
+#
+# .goreleaser.yaml sets skip_upload on the scoop target, so GoReleaser writes
+# dist/scoop/jms-client.json but does not push it. Leaving that as printed
+# instructions means the user-facing installer silently lags the release: the
+# release is published, the registry is up to date, and `scoop install` still
+# hands over the previous version. Doing it here makes the release
+# self-contained.
+#
+# The bucket is a separate repository, so the push needs a credential that can
+# write to it. In GitHub Actions the automatic GITHUB_TOKEN is scoped to the
+# repository running the workflow and cannot touch another one, so CI needs a
+# PAT in a secret; SCOOP_TOKEN carries it. Locally, gh's stored credential is
+# used instead.
+#
+# Skipping (with the command printed) is deliberately not a failure: the
+# release itself has already succeeded by this point, and a red exit code would
+# say otherwise.
+step "Pushing the Scoop manifest"
+scoop_repo="MiFaZhan/scoop-bucket"
+scoop_path="bucket/jms-client.json"
+scoop_gh() {
+    if [ -n "${SCOOP_TOKEN:-}" ]; then
+        GH_TOKEN="$SCOOP_TOKEN" gh "$@"
+    else
+        gh "$@"
+    fi
+}
+scoop_cmd() {
+    printf '    gh api -X PUT repos/%s/contents/%s \\\n' "$scoop_repo" "$scoop_path"
+    printf '      -f message="jms-client %s" -f branch=main \\\n' "$version"
+    printf '      -f content="$(base64 -w0 dist/scoop/jms-client.json)"\n'
+}
+if ! scoop_gh auth status >/dev/null 2>&1; then
+    echo "  no credential for $scoop_repo; skipping the Scoop push"
+    echo "  after authenticating, run:"
+    scoop_cmd
+else
+    # The blob sha is required to update an existing file; without it the API
+    # answers 422 "sha wasn't supplied". A first release has no file yet, so it
+    # is passed only when the path already exists.
+    existing_sha=$(scoop_gh api "repos/$scoop_repo/contents/$scoop_path" --jq .sha 2>/dev/null || true)
+    if [ -n "$existing_sha" ]; then
+        scoop_gh api -X PUT "repos/$scoop_repo/contents/$scoop_path" \
+            -f message="jms-client $version" -f branch=main -f sha="$existing_sha" \
+            -f content="$(base64 -w0 dist/scoop/jms-client.json)" >/dev/null
+    else
+        scoop_gh api -X PUT "repos/$scoop_repo/contents/$scoop_path" \
+            -f message="jms-client $version" -f branch=main \
+            -f content="$(base64 -w0 dist/scoop/jms-client.json)" >/dev/null
+    fi
+    pushed=$(scoop_gh api "repos/$scoop_repo/contents/$scoop_path" --jq .content \
+        | python -c "import sys,base64,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])")
+    if [ "$pushed" = "$version" ]; then
+        echo "  bucket serves $pushed"
+    else
+        # A bucket still naming the old version is the exact failure this step
+        # exists to prevent, so it is reported rather than assumed.
+        fail "the bucket still serves $pushed, want $version"
+    fi
+fi
+
 step "Release $tag complete"
 cat <<EOF
   The MCP registry record for $version was published and verified above.
-
-  Scoop: .goreleaser.yaml sets skip_upload, so the manifest in
-  dist/scoop/ was not pushed. Push it to the bucket to make the new
-  version installable:
-    gh api -X PUT repos/MiFaZhan/scoop-bucket/contents/bucket/jms-client.json \\
-      -f message="jms-client $version" -f branch=main \\
-      -f content="\$(base64 -w0 dist/scoop/jms-client.json)"
-  (or clone the bucket and commit the file).
+  The Scoop bucket was pushed to $version above.
 EOF

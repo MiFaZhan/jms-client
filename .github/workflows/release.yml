@@ -1,0 +1,230 @@
+name: release
+
+# A release is cut from main, so it runs when main moves.
+#
+# The alternative — triggering on a tag push — cannot work: the version is
+# stamped into mcpb/manifest.json and mcpb/server.json *before* the tag is
+# created, because a tag is immutable. That stamping has to be committed to
+# main first, which means the tag is always created after the commit that a
+# tag trigger would have fired on. Dispatching from main keeps the two in
+# order.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (for example v0.1.4). Empty runs the tests only."
+        required: false
+        type: string
+      dry_run:
+        description: "Build and verify without publishing"
+        required: false
+        default: false
+        type: boolean
+      keep_draft:
+        description: "Publish the release as a draft and stop before the registry"
+        required: false
+        default: false
+        type: boolean
+
+# The workflow needs to write a release and a tag, and to mint an OIDC token
+# for the MCP Registry. Nothing else, and never the default permissions.
+permissions:
+  contents: write
+  id-token: write
+
+# Releases are serialized. Two concurrent runs would both try to create the
+# same tag, and GoReleaser's single-invocation build means each run's hashes
+# are only valid for its own artifacts.
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  # A push to main runs only the test suite. Publishing stays explicit: a
+  # release publishes to six channels and cannot be undone, so it should not be
+  # a side effect of merging. dispatch_release reports whether the publish job
+  # should run.
+  tests:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+      tag: ${{ steps.decide.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Same gate GoReleaser applies before building, run early so a red test
+      # fails in a minute instead of after a six-platform build.
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Decide whether to publish
+        id: decide
+        run: |
+          set -euo pipefail
+          tag='${{ inputs.tag }}'
+          if [ '${{ github.event_name }}' != 'workflow_dispatch' ] || [ -z "$tag" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "No tag given: this run only verifies. Dispatch with a tag to release."
+          else
+            case $tag in
+              v*) ;;
+              *) echo "::error::the tag must start with 'v' (got $tag)"; exit 1 ;;
+            esac
+            echo "publish=true"  >> "$GITHUB_OUTPUT"
+            echo "tag=$tag"       >> "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    needs: tests
+    if: needs.tests.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # GoReleaser reads the full history to build the changelog, and the
+          # version comes from the tag.
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          install-only: true
+
+      # mcp-publisher is not on any package manager; the registry documents a
+      # release binary. Pinned by version so a change upstream cannot alter a
+      # release mid-flight.
+      - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: v1.4.0
+        run: |
+          set -euo pipefail
+          url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSL "$url" -o /tmp/mcp-publisher.tar.gz
+          tar -xzf /tmp/mcp-publisher.tar.gz -C /tmp mcp-publisher
+          sudo install -m 0755 /tmp/mcp-publisher /usr/local/bin/mcp-publisher
+          mcp-publisher --help >/dev/null
+
+      # Authentication for the MCP Registry. This is the step that makes CI
+      # possible at all: the interactive `login github` device flow cannot run
+      # here, and its JWT expires in about a day, so a stored token would rot
+      # between releases. OIDC mints a token per run instead.
+      - name: Authenticate with the MCP Registry
+        env:
+          MCP_PUBLISHER_OIDC: "1"
+        run: mcp-publisher login github-oidc
+
+      - name: Release
+        env:
+          # Same-repository writes (release, tag) use the workflow token; the
+          # separate scoop-bucket repository needs its own.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SCOOP_TOKEN: ${{ secrets.SCOOP_TOKEN }}
+          # The read-back authentication in release.sh must use OIDC rather
+          # than a stored gh credential.
+          MCP_PUBLISHER_OIDC: "1"
+        run: |
+          set -euo pipefail
+          args=('${{ needs.tests.outputs.tag }}')
+          [ '${{ inputs.dry_run }}'   = 'true' ] && args+=(--dry-run)
+          [ '${{ inputs.keep_draft }}' = 'true' ] && args+=(--keep-draft)
+          bash scripts/release.sh "${args[@]}"
+
+  # Verify the published artifacts independently of the release script, so a
+  # bug in release.sh cannot also produce a green verdict for itself.
+  verify:
+    needs: [tests, release]
+    if: needs.tests.outputs.publish == 'true' && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.tests.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version=${TAG#v}
+
+          echo "==> assets"
+          gh release view "$TAG" --json assets --jq '.assets[].name' | sort
+
+          # The bundle must declare the version being released. This is the
+          # check that v0.1.2 would have failed: its bundle said 0.1.1.
+          gh release download "$TAG" --pattern jms-client.mcpb --output /tmp/app.mcpb --clobber
+          bundle_version=$(python3 - <<'PY'
+          import json, io, zipfile
+          with zipfile.ZipFile('/tmp/app.mcpb') as z:
+              with z.open('manifest.json') as f:
+                  print(json.load(io.TextIOWrapper(f, encoding='utf-8'))['version'])
+          PY
+          )
+          echo "bundle manifest version: $bundle_version"
+          [ "$bundle_version" = "$version" ] || {
+            echo "::error::bundle declares $bundle_version, want $version"
+            exit 1
+          }
+
+          # And the record must name this bundle, or installing it fetches the
+          # previous release.
+          bundle_sha=$(sha256sum /tmp/app.mcpb | cut -d' ' -f1)
+          server_sha=$(python3 -c "import json;print(json.load(open('mcpb/server.json'))['packages'][0]['fileSha256'])")
+          [ "$bundle_sha" = "$server_sha" ] || {
+            echo "::error::server.json sha $server_sha != bundle $bundle_sha"
+            exit 1
+          }
+
+          echo "==> registry"
+          # The registry is read-replicated, so poll rather than reading once.
+          for _ in $(seq 1 12); do
+            got=$(curl -sL "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.MiFaZhan/jms-client" \
+              | VERSION="$version" python3 -c "
+          import json, os, sys
+          try:
+              d = json.load(sys.stdin)
+          except Exception:
+              raise SystemExit
+          for s in d.get('servers', []):
+              sv = s.get('server', {})
+              if sv.get('version') != os.environ['VERSION']:
+                  continue
+              for p in sv.get('packages') or []:
+                  print(p.get('fileSha256', ''))
+                  raise SystemExit
+          ")
+            [ -n "$got" ] && break
+            sleep 5
+          done
+          [ "$got" = "$bundle_sha" ] || {
+            echo "::error::registry sha '$got' != bundle $bundle_sha"
+            exit 1
+          }
+          echo "registry record matches the uploaded bundle"
+
+          echo "==> module proxy"
+          for _ in $(seq 1 12); do
+            if curl -sf -o /dev/null \
+              "https://proxy.golang.org/github.com/!mi!fa!zhan/jms-client/@v/$TAG.info"; then
+              echo "proxy has indexed $TAG"
+              break
+            fi
+            sleep 5
+          done
