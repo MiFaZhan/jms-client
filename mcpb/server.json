@@ -12,7 +12,7 @@
     {
       "registryType": "mcpb",
       "identifier": "https://github.com/MiFaZhan/jms-client/releases/download/v0.1.4/jms-client.mcpb",
-      "fileSha256": "75b5d42124dde940be599930e96a3d90f04302072a227ab49cc7c47240ea154a",
+      "fileSha256": "ec1ac988fecf5bc7470b29df86cfa2ea054ec55712d8ce57299c5b8059806d0b",
       "transport": {
         "type": "stdio"
       }
