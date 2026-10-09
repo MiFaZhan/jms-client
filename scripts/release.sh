@@ -308,17 +308,21 @@ for s in d.get('servers', []):
 # The registry is read-replicated, so a record that was just published is not
 # necessarily visible to the very next query. Reading once turns a successful
 # publish into a reported failure, which is worse than being slow: it invites
-# a retry that publishes the same version twice. The wait is what makes the
-# check trustworthy rather than merely fast.
+# a retry that publishes the same version twice.
+#
+# The window has to be generous. At v0.1.4 the record was absent for longer
+# than the 30s this used to allow, and the release reported failure even
+# though the publish had succeeded — the next query found it. A false failure
+# on a successful release is the worst outcome, so this errs towards waiting.
 registry_sha_wait() {
-    local attempts=${1:-6} sha
+    local attempts=${1:-18} sha
     for _ in $(seq 1 "$attempts"); do
         sha=$(registry_sha_for_version)
         if [ -n "$sha" ]; then
             printf '%s' "$sha"
             return 0
         fi
-        sleep 5
+        sleep 10
     done
     printf ''
 }
@@ -381,13 +385,17 @@ publish_registry_record() {
 
 # The record usually exists only after publishing, but a re-run of a release
 # that got this far will find it, so try the read first.
+#
+# The pre-publish read is short: a record that is not there yet is the normal
+# case, and waiting long for it would only delay the publish. The generous
+# wait belongs after publishing, when the record is known to exist.
 reg_sha=$(registry_sha_wait 3)
 
 if [ -z "$reg_sha" ]; then
     if command -v mcp-publisher >/dev/null 2>&1; then
         echo "  no registry record for $version yet; publishing"
         publish_registry_record || fail "publishing the registry record for $version failed"
-        reg_sha=$(registry_sha_wait 6)
+        reg_sha=$(registry_sha_wait 18)
     else
         fail "mcp-publisher is not on PATH, so the registry record for $version cannot be published"
     fi
