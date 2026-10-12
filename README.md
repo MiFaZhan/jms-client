@@ -142,6 +142,29 @@ jms mcp [--print-config]                       # stdio MCP 服务器
 }
 ```
 
+### MCP 侧的端点与后端覆盖
+
+MCP 进程是长驻的、且工具参数里没有 `--endpoint` / `--backend` 的等价物，所以两个环境变量提供人工覆盖（写在 MCP 客户端条目的 `env` 里）：
+
+| 变量 | 取值 | 作用 |
+|---|---|---|
+| `JMS_MCP_ENDPOINT` | `internal` \| `external` | 强制地址，等价于 CLI 的 `--endpoint` |
+| `JMS_MCP_BACKEND` | `ssh` \| `ws` \| `auto` | 强制终端后端，等价于 CLI 的 `--backend` |
+
+两者都不设时按「记忆优先」策略走：每个端点上次成功的后端记录在 `state.json`（由 CLI 与 MCP 共同读写），冷启动直接用它，避免每次先付一次失败握手；调用失败后会自动重读 `state.json`、重选端点/后端并重试一次，不需要重启 MCP 进程。
+
+```json
+{
+  "mcpServers": {
+    "jms": {
+      "command": "jms",
+      "args": ["mcp"],
+      "env": { "JMS_MCP_BACKEND": "ssh" }
+    }
+  }
+}
+```
+
 ## 后端与兼容性
 
 JumpServer 的 KoKo 组件提供两种终端通道：
