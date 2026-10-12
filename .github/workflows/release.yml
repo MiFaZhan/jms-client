@@ -170,6 +170,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The release job commits the stamped version and the recorded bundle
+          # hash to main *while it runs*, so the commit that triggered this run
+          # still carries the previous release's hash. Checking out the
+          # triggering commit therefore compares the new bundle against the old
+          # record and fails on every release — which is exactly what happened
+          # at v0.1.5, where the release itself succeeded and only this job
+          # reported a mismatch. Read the branch tip instead.
+          ref: main
+          fetch-depth: 0
 
       - name: Verify the release assets
         env:
