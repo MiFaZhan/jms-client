@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/MiFaZhan/jms-client/internal/api"
 	"github.com/MiFaZhan/jms-client/internal/assets"
 	"github.com/MiFaZhan/jms-client/internal/auth"
 	"github.com/MiFaZhan/jms-client/internal/config"
@@ -46,6 +48,54 @@ const (
 
 // EnvDebug enables the debug-only jms_pool_status tool.
 const EnvDebug = "JMS_MCP_DEBUG"
+
+// EnvBackend and EnvEndpoint override, for the whole MCP process, what the
+// CLI exposes as --backend and --endpoint.
+//
+// The MCP surface has no flags: an AI client launches one long-lived process
+// and cannot add arguments per call. Without these variables the only way to
+// steer the transport from the MCP side was to edit configuration and
+// restart the host, which is exactly the trap this fixes — a host that had
+// pinned itself to an endpoint/backend pair the failover policy had since
+// abandoned could only be recovered by restarting the client
+// (DESIGN.md「端点故障转移」第 4 点、第 7 点).
+const (
+	// EnvBackend forces the transport backend: ssh, ws or auto.
+	EnvBackend = "JMS_MCP_BACKEND"
+	// EnvEndpoint forces an address kind: internal or external.
+	EnvEndpoint = "JMS_MCP_ENDPOINT"
+)
+
+// backendOverride reads EnvBackend. An unset or empty value means "no
+// override", which keeps the remembered-backend policy in charge; an invalid
+// value is reported so a typo is not silently ignored.
+func backendOverride() (transport.BackendType, bool, error) {
+	raw := strings.TrimSpace(os.Getenv(EnvBackend))
+	if raw == "" {
+		return "", false, nil
+	}
+	b, err := transport.ParseBackend(raw)
+	if err != nil {
+		return "", false, fmt.Errorf("%s=%q: must be ssh, ws or auto", EnvBackend, raw)
+	}
+	return b, true, nil
+}
+
+// endpointOverride reads EnvEndpoint. An unset or empty value means "no
+// override": the configured preference and the last-good memory decide.
+func endpointOverride() (endpoint.Kind, error) {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(EnvEndpoint)))
+	switch raw {
+	case "":
+		return "", nil
+	case config.KindInternal:
+		return endpoint.KindInternal, nil
+	case config.KindExternal:
+		return endpoint.KindExternal, nil
+	default:
+		return "", fmt.Errorf("%s=%q: must be internal or external", EnvEndpoint, raw)
+	}
+}
 
 // DefaultExecTimeout bounds one jms_exec call when the client omits
 // timeout. It matches the Python tool's default (30s).
@@ -439,9 +489,21 @@ func (s *Server) sessionFor(ctx context.Context, serverName, configPath string) 
 		probe = endpoint.ProbeWith(px)
 	}
 
+	// The state is re-read on every call. A long-lived host shares state.json
+	// with short-lived CLI invocations, so caching it here would pin this
+	// process to whatever the file said when it started - the CLI would move
+	// on and the MCP host would keep dialing the abandoned address.
 	st, _ := s.state(srv.Name).Get(srv.Name)
-	candidates := endpoint.Candidates(srv, "", st)
+
+	force, err := endpointOverride()
+	if err != nil {
+		return nil, nil, err
+	}
+	candidates := endpoint.Candidates(srv, force, st)
 	if len(candidates) == 0 {
+		if force != "" {
+			return nil, nil, fmt.Errorf("server %q has no %s address configured", srv.Name, force)
+		}
 		return nil, nil, fmt.Errorf("server %q has no address configured: run `jms config add %s`",
 			srv.Name, srv.Name)
 	}
@@ -474,6 +536,171 @@ func (s *Server) sessionFor(ctx context.Context, serverName, configPath string) 
 		}
 	}
 	return nil, nil, loginErr
+}
+
+// backendFor resolves the transport backend for one tool call on the session
+// that was selected.
+//
+// Precedence, matching the CLI's behaviour (DESIGN.md「端点故障转移」第 4 点):
+//
+//  1. JMS_MCP_BACKEND, when set — the operator's explicit override
+//  2. the backend remembered for the selected endpoint in state.json
+//  3. ws, the MCP default
+//
+// Step 2 is the part that was missing. The memory exists precisely because
+// one endpoint often allows only one of the two backends, and it is written
+// by every CLI invocation. A host that ignored it would start every call from
+// the compiled-in default, which on an internal address that answers 302 over
+// WebSocket means failing forever while the CLI succeeds.
+//
+// tried, when non-nil, holds a backend that already failed for this call. A
+// preferred backend that is in that set is replaced by the other concrete
+// backend, which is what makes the one-shot recovery able to actually change
+// something: an internal address that answers 302 over WebSocket is exactly
+// the case where ssh is the answer, and the memory alone cannot know that
+// because it only records what used to work.
+func (s *Server) backendFor(sess *auth.Session, srv *config.ServerConfig, tried map[transport.BackendType]bool) transport.BackendType {
+	if b, ok, err := backendOverride(); err == nil && ok {
+		// An explicit instruction is not second-guessed, not even by the
+		// "already failed" set.
+		return b
+	}
+	preferred := s.rememberedBackend(sess, srv)
+	if !tried[preferred] {
+		return preferred
+	}
+	alt := alternateBackend(preferred)
+	if tried[alt] {
+		// Both concrete backends have already been attempted for this call,
+		// so there is nothing new to offer. Returning the preferred one makes
+		// the caller skip its retry instead of repeating a call that cannot
+		// differ (DESIGN.md「端点故障转移」第 3 点: no blind replay).
+		return preferred
+	}
+	return alt
+}
+
+// rememberedBackend returns the backend to try first for a session: the one
+// recorded for the address the session is bound to, or the MCP default.
+func (s *Server) rememberedBackend(sess *auth.Session, srv *config.ServerConfig) transport.BackendType {
+	// The endpoint is whatever the session is actually bound to: that is the
+	// key the memory is stored under, and it is the address the backend has
+	// to work against.
+	kind, ok := endpoint.KindOf(srv, sessBaseURL(sess))
+	if !ok {
+		return transport.BackendWS
+	}
+	st, ok := s.state(srv.Name).Get(srv.Name)
+	if !ok {
+		return transport.BackendWS
+	}
+	remembered := strings.TrimSpace(st.BackendFor(kind))
+	if remembered == "" {
+		return transport.BackendWS
+	}
+	b, err := transport.ParseBackend(remembered)
+	if err != nil {
+		// A hand-edited state file is not worth failing a call over; the
+		// default is a working backend for the common case.
+		return transport.BackendWS
+	}
+	return b
+}
+
+// alternateBackend returns the other concrete backend, so a retry can try
+// something genuinely different. Auto is returned unchanged: it is already
+// "try both", so there is no other single backend to prefer.
+func alternateBackend(b transport.BackendType) transport.BackendType {
+	switch b {
+	case transport.BackendWS:
+		return transport.BackendSSH
+	case transport.BackendSSH:
+		return transport.BackendWS
+	default:
+		return b
+	}
+}
+
+// rememberBackend records the backend that worked, so the next cold start - in
+// this process or any CLI invocation - goes straight to it. A failure to
+// persist is not an error: it only costs the next call the same handshake it
+// would have paid anyway.
+func (s *Server) rememberBackend(srv *config.ServerConfig, kind endpoint.Kind, backend transport.BackendType) {
+	if srv == nil || kind == "" || backend == "" {
+		return
+	}
+	store := s.state(srv.Name)
+	st, _ := store.Get(srv.Name)
+	_ = store.Set(srv.Name, st.WithBackend(kind, string(backend)))
+}
+
+// sessionEndpoint reports which configured address a session is bound to.
+func sessionEndpoint(srv *config.ServerConfig, sess *auth.Session) endpoint.Kind {
+	kind, _ := endpoint.KindOf(srv, sessBaseURL(sess))
+	return kind
+}
+
+// sessBaseURL returns the address a session talks to.
+func sessBaseURL(sess *auth.Session) string {
+	if sess == nil {
+		return ""
+	}
+	return sess.BaseURL
+}
+
+// retryWithFreshSession runs again through a fresh login, for the failures
+// that mean the pooled session or endpoint is stale rather than the request
+// being wrong (DESIGN.md「端点故障转移」第 3 点).
+//
+// It re-runs the whole selection: the session is dropped from the pool, so
+// the next attempt re-reads state.json, re-orders the candidates and re-logs
+// in. That is what turns "this host is stuck on a dead endpoint" into one
+// extra login instead of a restart of the AI client. The attempt is bounded
+// to one: the caller runs at most two, and a failure that survives a fresh
+// login is not a stale-cache problem.
+func (s *Server) retryWithFreshSession(ctx context.Context, srv *config.ServerConfig,
+	serverName, configPath string) (*auth.Session, *config.ServerConfig, error) {
+
+	if s.opts.Session != nil {
+		// An injected session seam owns the session's lifetime; there is
+		// nothing to invalidate.
+		return s.sessionFor(ctx, serverName, configPath)
+	}
+	if srv != nil && s.opts.Sessions != nil {
+		s.opts.Sessions.Invalidate(srv.Name)
+	}
+	return s.sessionFor(ctx, serverName, configPath)
+}
+
+// recoverable reports whether a tool failure is worth one fresh login.
+//
+// A cancelled call is not retried (the client asked to stop), and neither is
+// an error the caller caused: only transport-level failures - a stale session,
+// a token the endpoint no longer accepts, a backend that stopped answering -
+// are recovered this way.
+func recoverable(ctx context.Context, err error) bool {
+	if err == nil || ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, transport.ErrUnsupported) {
+		return false
+	}
+	// A credential rejection is terminal: a fresh login would be rejected the
+	// same way, and retrying it would only prompt for MFA twice.
+	if authErr, ok := api.AsAuthError(err); ok {
+		switch authErr.StatusCode {
+		case http.StatusBadRequest, http.StatusUnauthorized,
+			http.StatusForbidden, http.StatusUnprocessableEntity:
+			return false
+		}
+	}
+	if errors.Is(err, auth.ErrMFANotProvided) || errors.Is(err, auth.ErrMissingSessionCookie) {
+		return false
+	}
+	return true
 }
 
 // state returns the endpoint state store, creating the default file store
@@ -779,20 +1006,49 @@ func (s *Server) execTool() (*mcp.Tool, mcp.ToolHandler) {
 			return errorResult(err), nil
 		}
 
-		started := s.startOp(srv.Name, assetName, string(transport.BackendWS), args.Command)
-		result, err := s.exec(ctx, srv, sess, assetName, args.Command, connpool.ExecOptions{
-			Account:  args.Account,
-			Protocol: args.Protocol,
-			Backend:  transport.BackendWS,
-			Timeout:  timeout,
-		})
-		if err != nil {
-			s.endOp(started, srv.Name, assetName, string(transport.BackendWS), args.Command,
-				transferOutcome{err: err})
-			return errorResult(err), nil
+		// The first attempt uses whatever the policy resolved: the address
+		// the session is bound to, and the backend remembered for it (or the
+		// JMS_MCP_BACKEND override).
+		backend := s.backendFor(sess, srv, nil)
+		started := s.startOp(srv.Name, assetName, string(backend), args.Command)
+		result, execErr := s.execOnce(ctx, srv, sess, assetName, args.Command, backend, args, timeout)
+		if execErr != nil && recoverable(ctx, execErr) && result.Output == "" {
+			// One recovery attempt through a fresh login: the pooled session
+			// or its remembered backend may simply be stale. Re-running the
+			// selection re-reads state.json, so a backend another process just
+			// recorded - or a different address - is picked up here instead of
+			// requiring a restart of this host.
+			//
+			// The retry is bounded by the same safety rule the terminal pool
+			// applies: a command that already produced output is never sent
+			// again, because the remote host has seen it and rm/reboot are not
+			// idempotent (DESIGN.md「TerminalPool」第 5 点).
+			if retrySess, retrySrv, retryErr := s.retryWithFreshSession(ctx, srv, serverName, args.ConfigPath); retryErr == nil {
+				retryBackend := s.backendFor(retrySess, retrySrv, map[transport.BackendType]bool{backend: true})
+				// Only retry when something actually changed. Repeating the
+				// identical call would double the latency for no gain.
+				if retrySess != sess || retryBackend != backend {
+					result, execErr = s.execOnce(ctx, retrySrv, retrySess, assetName, args.Command,
+						retryBackend, args, timeout)
+					if execErr == nil {
+						// The retry's session and backend are the ones that worked, so
+						// both the audit record and the backend memory must be taken
+						// from it rather than from the attempt that failed.
+						sess, srv, backend = retrySess, retrySrv, retryBackend
+					}
+				}
+			}
+		}
+		if execErr != nil {
+			s.endOp(started, srv.Name, assetName, string(backend), args.Command,
+				transferOutcome{err: execErr})
+			return errorResult(execErr), nil
+		}
+		if kind := sessionEndpoint(srv, sess); kind != "" {
+			s.rememberBackend(srv, kind, backend)
 		}
 
-		s.endOp(started, srv.Name, assetName, string(transport.BackendWS), args.Command,
+		s.endOp(started, srv.Name, assetName, string(backend), args.Command,
 			transferOutcome{
 				output:      result.Output,
 				outputBytes: len(result.Output),
@@ -800,6 +1056,19 @@ func (s *Server) execTool() (*mcp.Tool, mcp.ToolHandler) {
 			})
 		return textResult(result.Output), nil
 	}
+}
+
+// execOnce runs one command with one backend, through the injected seam or
+// the real pool. It exists so the recovery attempt above can be expressed as
+// "the same call, once more" rather than as a second copy of the call.
+func (s *Server) execOnce(ctx context.Context, srv *config.ServerConfig, sess *auth.Session,
+	assetName, command string, backend transport.BackendType, args execArgs, timeout time.Duration) (transport.Result, error) {
+	return s.exec(ctx, srv, sess, assetName, command, connpool.ExecOptions{
+		Account:  args.Account,
+		Protocol: args.Protocol,
+		Backend:  backend,
+		Timeout:  timeout,
+	})
 }
 
 // exec runs one command through the injected seam or the real pool.
@@ -873,14 +1142,14 @@ func (s *Server) uploadTool() (*mcp.Tool, mcp.ToolHandler) {
 		}
 		started := s.startOp(srv.Name, assetName, "sftp", "upload "+args.Src)
 
-		result, err := s.transfer(ctx, TransferRequest{
+		result, err := s.transferWithRecovery(ctx, args.ConfigPath, TransferRequest{
 			Session:   sess,
 			Asset:     assetName,
 			Local:     args.Src,
 			Remote:    args.Dst,
 			Direction: xfer.Upload,
 			Verify:    true,
-		})
+		}, transferSide{serverName: serverName, srv: srv, current: sess})
 		if err != nil {
 			s.endOp(started, srv.Name, assetName, "sftp", "upload "+args.Src,
 				transferOutcome{err: err})
@@ -927,14 +1196,14 @@ func (s *Server) downloadTool() (*mcp.Tool, mcp.ToolHandler) {
 		}
 		started := s.startOp(srv.Name, assetName, "sftp", "download "+args.Src)
 
-		result, err := s.transfer(ctx, TransferRequest{
+		result, err := s.transferWithRecovery(ctx, args.ConfigPath, TransferRequest{
 			Session:   sess,
 			Asset:     assetName,
 			Local:     args.Dst,
 			Remote:    args.Src,
 			Direction: xfer.Download,
 			Verify:    true,
-		})
+		}, transferSide{serverName: serverName, srv: srv, current: sess})
 		if err != nil {
 			s.endOp(started, srv.Name, assetName, "sftp", "download "+args.Src,
 				transferOutcome{err: err})
@@ -983,17 +1252,24 @@ func (s *Server) relayTool() (*mcp.Tool, mcp.ToolHandler) {
 		if err != nil {
 			return errorResult(err), nil
 		}
-		_ = dstSrv
 		started := s.startOp(srcSrv.Name, src.asset, "sftp",
 			fmt.Sprintf("relay %s -> %s", args.SrcSpec, args.DstSpec))
 
-		result, err := s.transfer(ctx, TransferRequest{
+		// A relay has two sides and they may live on different servers, so both
+		// are refreshed on recovery: whichever one is stale is the one that
+		// fails, and the caller cannot tell which from the outside. Re-selecting
+		// a side that was already valid returns its pooled session unchanged,
+		// so only the stale side pays for a login.
+		result, err := s.transferWithRecovery(ctx, args.ConfigPath, TransferRequest{
 			Verify: true,
 			Relay: &RelayRequest{
 				SrcSession: srcSess, SrcAsset: src.asset, SrcPath: src.path,
 				DstSession: dstSess, DstAsset: dst.asset, DstPath: dst.path,
 			},
-		})
+		},
+			transferSide{serverName: src.server, srv: srcSrv, current: srcSess},
+			transferSide{serverName: dst.server, srv: dstSrv, current: dstSess},
+		)
 		if err != nil {
 			s.endOp(started, srcSrv.Name, src.asset, "sftp",
 				fmt.Sprintf("relay %s -> %s", args.SrcSpec, args.DstSpec),
@@ -1015,6 +1291,118 @@ func (s *Server) transfer(ctx context.Context, req TransferRequest) (xfer.Result
 		return s.opts.Transfer(ctx, req)
 	}
 	return defaultTransfer(ctx, req)
+}
+
+// transferSide is one server a transfer talks to, together with the session
+// the request currently holds for it. A one-sided transfer has one side; a
+// relay has two, and they may live on different servers.
+type transferSide struct {
+	serverName string
+	srv        *config.ServerConfig
+	current    *auth.Session
+}
+
+// transferWithRecovery runs one transfer, and on a transport-class failure
+// retries it once through freshly selected sessions.
+//
+// The reason is the same as for exec: a transfer derives its KoKo address from
+// the session, so a pooled session bound to an address the failover policy has
+// since abandoned fails every time. Re-running the selection re-reads
+// state.json and re-logs in, which is what makes the host recover without a
+// restart (DESIGN.md「端点故障转移」第 3 点).
+//
+// Every side is refreshed, because the caller cannot tell from the error which
+// side of a relay was stale. A side that was already valid comes back from the
+// pool unchanged, so only the stale side pays for a login.
+//
+// The retry happens only when a refreshed session is actually a different one,
+// and only when the failed attempt moved no bytes: a transfer that already
+// wrote data is not replayed, for the same reason a command that produced
+// output is not (DESIGN.md「TerminalPool」第 5 点).
+func (s *Server) transferWithRecovery(ctx context.Context, configPath string,
+	req TransferRequest, sides ...transferSide) (xfer.Result, error) {
+
+	res, err := s.transfer(ctx, req)
+	if err == nil || !recoverable(ctx, err) || !transferNotStarted(res, err) {
+		return res, err
+	}
+
+	refreshed := make([]transferSide, 0, len(sides))
+	changed := false
+	for _, side := range sides {
+		if side.srv == nil {
+			continue
+		}
+		name := side.serverName
+		if strings.TrimSpace(name) == "" {
+			name = side.srv.Name
+		}
+		sess, _, retryErr := s.retryWithFreshSession(ctx, side.srv, name, configPath)
+		if retryErr != nil {
+			// A side that cannot be re-selected leaves nothing safe to retry:
+			// report the original failure rather than a login error the caller
+			// cannot act on.
+			return res, err
+		}
+		side.current = sess
+		refreshed = append(refreshed, side)
+		if sess != req.sessionFor(side.srv) {
+			changed = true
+		}
+	}
+	if !changed {
+		return res, err
+	}
+
+	retryReq := req
+	if req.Relay == nil {
+		retryReq.Session = refreshed[0].current
+		return s.transfer(ctx, retryReq)
+	}
+	relay := *req.Relay
+	for _, side := range refreshed {
+		if relay.SrcSession != nil && relay.SrcSession.Server != nil &&
+			relay.SrcSession.Server.Name == side.srv.Name {
+			relay.SrcSession = side.current
+		}
+		if relay.DstSession != nil && relay.DstSession.Server != nil &&
+			relay.DstSession.Server.Name == side.srv.Name {
+			relay.DstSession = side.current
+		}
+	}
+	retryReq.Relay = &relay
+	return s.transfer(ctx, retryReq)
+}
+
+// sessionFor returns the session a request currently holds for a server, so
+// recovery can tell a refreshed session from the one that just failed.
+func (r *TransferRequest) sessionFor(srv *config.ServerConfig) *auth.Session {
+	if r == nil || srv == nil {
+		return nil
+	}
+	if r.Relay == nil {
+		return r.Session
+	}
+	for _, sess := range []*auth.Session{r.Relay.SrcSession, r.Relay.DstSession} {
+		if sess != nil && sess.Server != nil && sess.Server.Name == srv.Name {
+			return sess
+		}
+	}
+	return nil
+}
+
+// transferNotStarted reports whether a transfer failed before it moved any
+// data, which is the only case the retry above may repeat.
+//
+// The signal is the transfer's own byte counter: a run that returned no bytes
+// never completed a chunk, so re-running it cannot duplicate work on the
+// remote side. A verification failure is excluded explicitly - the file was
+// written, and retrying would rewrite it rather than fix the mismatch.
+func transferNotStarted(res xfer.Result, err error) bool {
+	if errors.Is(err, xfer.ErrVerifyFailed) {
+		return false
+	}
+	return res.Bytes == 0
 }
 
 // defaultTransfer builds an xfer engine per call.
