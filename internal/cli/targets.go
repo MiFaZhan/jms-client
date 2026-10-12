@@ -102,19 +102,15 @@ func (c *serverConnection) connectAndResolve(ctx context.Context, force endpoint
 
 // parseBackend validates the --backend flag value. The empty string means
 // auto, which is the transport default.
+//
+// The vocabulary lives in transport.ParseBackend so the CLI flag and the
+// MCP environment variable cannot drift apart.
 func parseBackend(raw string) (transport.BackendType, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "":
-		return transport.BackendAuto, nil
-	case "ssh":
-		return transport.BackendSSH, nil
-	case "ws":
-		return transport.BackendWS, nil
-	case "auto":
-		return transport.BackendAuto, nil
-	default:
+	b, err := transport.ParseBackend(raw)
+	if err != nil {
 		return "", fmt.Errorf("invalid --backend %q: must be ssh, ws or auto", raw)
 	}
+	return b, nil
 }
 
 // execTimeout converts the -t flag into a duration; a non-positive value
@@ -130,6 +126,11 @@ func execTimeout(seconds int) time.Duration {
 // session is bound to, if any. It lets a cold start skip the auto sequence
 // instead of paying a handshake timeout on a blocked port first
 // (DESIGN.md「端点故障转移」第 4 点).
+//
+// The memory is read on every call rather than cached in the process: a
+// long-lived host (the MCP server) shares state.json with short-lived CLI
+// invocations, so a backend another process just recorded is the one that is
+// currently known to work.
 func (c *serverConnection) preferredBackend(kind endpoint.Kind) transport.BackendType {
 	if c.deps.Runtime == nil || c.deps.State == nil {
 		return ""

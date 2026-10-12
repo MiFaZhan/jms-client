@@ -27,7 +27,13 @@ for the same asset reuses the live session instead of logging in again. The
 host also accepts ` + "`jms attach`" + ` clients, which then watch the same
 event stream and can run commands on the same pooled connections.
 
-Diagnostics go to stderr: stdout is the MCP protocol channel.`,
+Diagnostics go to stderr: stdout is the MCP protocol channel.
+
+This process has no per-call flags, so the endpoint and backend are steered
+with the environment instead: JMS_MCP_ENDPOINT (internal|external) and
+JMS_MCP_BACKEND (ssh|ws|auto). When neither is set, the backend remembered for
+the selected endpoint in state.json is used, and a connection failure
+re-selects and retries once rather than requiring a restart.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if printConfig {

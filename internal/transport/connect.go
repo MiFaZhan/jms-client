@@ -100,6 +100,26 @@ func normalizeBackend(b BackendType) BackendType {
 	return b
 }
 
+// ParseBackend validates a backend name: "ssh", "ws", "auto", or empty
+// for auto. It exists because two surfaces accept the name from a user —
+// the CLI --backend flag and the JMS_MCP_BACKEND environment variable — and
+// a value one of them rejects must not be silently accepted by the other
+// (DESIGN.md「端点故障转移」第 4 点).
+func ParseBackend(raw string) (BackendType, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return BackendAuto, nil
+	case "ssh":
+		return BackendSSH, nil
+	case "ws":
+		return BackendWS, nil
+	case "auto":
+		return BackendAuto, nil
+	default:
+		return "", fmt.Errorf("%w %q: must be ssh, ws or auto", ErrUnsupported, raw)
+	}
+}
+
 // autoSequence is the backend order BackendAuto tries (DESIGN.md「SSH 后端」).
 var autoSequence = []BackendType{BackendSSH, BackendWS}
 
