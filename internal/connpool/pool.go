@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiFaZhan/jms-client/internal/api"
 	"github.com/MiFaZhan/jms-client/internal/assets"
 	"github.com/MiFaZhan/jms-client/internal/auth"
 	"github.com/MiFaZhan/jms-client/internal/config"
@@ -136,6 +137,17 @@ func (p *SessionPool) Get(ctx context.Context, srv *config.ServerConfig, baseURL
 // The policy is recorded on the session so the KoKo WebSocket, SSH and
 // SFTP connections derived from it reach the same network the login did
 // (DESIGN.md「代理策略」).
+//
+// A cached session is only reused when it is bound to the requested
+// address. The pool key is the alias, but the address is what the session
+// actually talks to: a long-lived host (the MCP server) re-runs the
+// failover policy on every call, and when that policy moves to another
+// address the cached session is stale by definition — every KoKo connection
+// derived from it would keep dialing the address the policy just abandoned.
+// That was a real failure: the MCP server kept opening WebSockets to an
+// internal address that had started answering 302, while the CLI, whose pool
+// is a fresh process every time, worked. A mismatched address therefore
+// re-logs in rather than being handed back (DESIGN.md「端点故障转移」第 1 点).
 func (p *SessionPool) GetWithProxy(ctx context.Context, srv *config.ServerConfig, baseURL string,
 	creds auth.Credentials, otpPrompt func() (string, error), px netproxy.Proxy) (*auth.Session, error) {
 	if p == nil {
@@ -145,21 +157,37 @@ func (p *SessionPool) GetWithProxy(ctx context.Context, srv *config.ServerConfig
 		return nil, errors.New("connpool: Get needs a server config")
 	}
 	alias := srv.Name
+	want := api.NormalizeBaseURL(baseURL)
 
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
 		return nil, ErrClosed
 	}
+	// replacing records that a cached session exists for this alias but
+	// points at another address. The login below then replaces it, which the
+	// audit stream must report as a relogin rather than a first login.
+	replacing := false
 	if sess, ok := p.sessions[alias]; ok {
-		p.mu.Unlock()
-		return sess, nil
+		if boundTo(sess, want) {
+			p.mu.Unlock()
+			return sess, nil
+		}
+		replacing = true
 	}
 	if call, ok := p.creating[alias]; ok {
 		p.mu.Unlock()
 		select {
 		case <-call.done:
-			return call.sess, call.err
+			if call.err != nil || boundTo(call.sess, want) {
+				return call.sess, call.err
+			}
+			// The login this caller waited for went to the address that was
+			// current when it started. The caller wants a different one, so it
+			// has to start its own; the stale session is dropped so the next
+			// call does not reuse it either.
+			p.dropStale(alias, call.sess)
+			return p.GetWithProxy(ctx, srv, baseURL, creds, otpPrompt, px)
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -186,7 +214,10 @@ func (p *SessionPool) GetWithProxy(ctx context.Context, srv *config.ServerConfig
 			p.sessions = map[string]*auth.Session{}
 		}
 		p.sessions[alias] = sess
-		relogin = p.invalidated[alias]
+		// A login that replaced a session for the same alias is a relogin,
+		// whether it was dropped by Invalidate or because it pointed at
+		// another address.
+		relogin = replacing || p.invalidated[alias]
 		delete(p.invalidated, alias)
 	}
 	p.mu.Unlock()
@@ -198,6 +229,40 @@ func (p *SessionPool) GetWithProxy(ctx context.Context, srv *config.ServerConfig
 		p.notifyLogin(alias, relogin)
 	}
 	return sess, err
+}
+
+// boundTo reports whether sess talks to the normalized address want. An
+// empty want means the caller did not care which address, so anything cached
+// is acceptable.
+func boundTo(sess *auth.Session, want string) bool {
+	if want == "" {
+		return true
+	}
+	if sess == nil {
+		return false
+	}
+	return api.NormalizeBaseURL(sess.BaseURL) == want
+}
+
+// dropStale removes a cached session for alias when it is still the cached
+// one, so a session that points at the wrong address is not handed to the
+// next caller either. The alias is marked invalidated, so the login that
+// follows is reported as a relogin: the address moved, which is exactly what
+// that marker means to a reader of the audit stream.
+func (p *SessionPool) dropStale(alias string, stale *auth.Session) {
+	if p == nil || stale == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.sessions[alias] != stale {
+		return
+	}
+	delete(p.sessions, alias)
+	if p.invalidated == nil {
+		p.invalidated = map[string]bool{}
+	}
+	p.invalidated[alias] = true
 }
 
 // notifyLogin reports one login to the observer, if any.

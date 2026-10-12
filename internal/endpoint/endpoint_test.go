@@ -700,3 +700,80 @@ func TestFileStateStorePersistsMultipleServers(t *testing.T) {
 		t.Fatalf("server b = %v, want external", st.LastGood)
 	}
 }
+
+// TestKindOfMatchesConfiguredAddresses pins the lookup a long-lived process
+// uses to ask which endpoint its cached session is bound to. The comparison
+// must go through the same normalization the HTTP client uses, or a trailing
+// slash would look like a different endpoint and cost a needless relogin.
+func TestKindOfMatchesConfiguredAddresses(t *testing.T) {
+	srv := server("s", "http://10.0.0.1:2280/", "http://bastion.example.com:2280/", "")
+
+	cases := []struct {
+		url  string
+		want Kind
+		ok   bool
+	}{
+		{"http://10.0.0.1:2280/", KindInternal, true},
+		{"http://10.0.0.1:2280", KindInternal, true},
+		{"  http://10.0.0.1:2280/  ", KindInternal, true},
+		{"http://bastion.example.com:2280/", KindExternal, true},
+		{"http://elsewhere.example.com:2280/", "", false},
+		{"", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := KindOf(srv, tc.url)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("KindOf(%q) = (%q, %v), want (%q, %v)", tc.url, got, ok, tc.want, tc.ok)
+		}
+	}
+
+	// A bare host is normalized to https://, so it matches an https address
+	// and not an http one: the scheme is part of the endpoint, not noise.
+	httpsSrv := server("s", "https://10.0.0.1:2280/", "", "")
+	if got, ok := KindOf(httpsSrv, "10.0.0.1:2280"); !ok || got != KindInternal {
+		t.Fatalf("KindOf(bare host) = (%q, %v), want (internal, true)", got, ok)
+	}
+	if _, ok := KindOf(srv, "bastion.example.com:2280"); ok {
+		t.Fatal("a bare host matched an http:// address; the scheme must be compared")
+	}
+
+	// A server with only one address configured must not report the other
+	// kind for a URL that happens to match nothing.
+	single := server("s", "", "http://bastion.example.com:2280/", "")
+	if _, ok := KindOf(single, "http://10.0.0.1:2280/"); ok {
+		t.Fatal("KindOf matched an address the server does not configure")
+	}
+	if got, ok := KindOf(single, "http://bastion.example.com:2280/"); !ok || got != KindExternal {
+		t.Fatalf("KindOf(external) = (%q, %v), want (external, true)", got, ok)
+	}
+	if _, ok := KindOf(nil, "http://10.0.0.1:2280/"); ok {
+		t.Fatal("KindOf(nil server) reported a match")
+	}
+}
+
+// TestStateWithBackendRecordsMemory pins the write half of the backend
+// memory. An empty backend must be ignored rather than erasing what an
+// earlier run learned, because a caller that never observed one (a failed
+// connect) knows nothing about which backend works.
+func TestStateWithBackendRecordsMemory(t *testing.T) {
+	st := State{LastGood: KindExternal, At: time.Now()}
+	st = st.WithBackend(KindInternal, "ssh")
+	st = st.WithBackend(KindExternal, " ws ")
+
+	if got := st.BackendFor(KindInternal); got != "ssh" {
+		t.Fatalf("BackendFor(internal) = %q, want ssh", got)
+	}
+	if got := st.BackendFor(KindExternal); got != "ws" {
+		t.Fatalf("BackendFor(external) = %q, want ws (trimmed)", got)
+	}
+	if st.LastGood != KindExternal {
+		t.Fatalf("WithBackend clobbered LastGood = %q", st.LastGood)
+	}
+
+	// An empty backend or kind is a no-op, and it must not create an empty
+	// map that then gets persisted.
+	empty := State{}.WithBackend(KindInternal, "   ").WithBackend("", "ws")
+	if empty.Backend != nil {
+		t.Fatalf("WithBackend with no value created a map: %v", empty.Backend)
+	}
+}

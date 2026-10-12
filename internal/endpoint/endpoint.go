@@ -85,6 +85,31 @@ type State struct {
 	Backend  map[Kind]string `json:"backend,omitempty"`
 }
 
+// KindOf reports which configured address a URL came from, and whether it
+// matched one. The comparison uses api.NormalizeBaseURL, so the address a
+// candidate carries and the address a session is bound to are compared the
+// way the HTTP client spells them.
+//
+// It is what lets a long-lived process ask "is the session I have cached
+// still the endpoint I would pick now?" without remembering the answer
+// (DESIGN.md「端点故障转移」第 1 点).
+func KindOf(srv *config.ServerConfig, rawURL string) (Kind, bool) {
+	want := api.NormalizeBaseURL(rawURL)
+	if srv == nil || want == "" {
+		return "", false
+	}
+	for _, kind := range []Kind{KindInternal, KindExternal} {
+		configured, ok := srv.URLFor(string(kind))
+		if !ok {
+			continue
+		}
+		if api.NormalizeBaseURL(configured) == want {
+			return kind, true
+		}
+	}
+	return "", false
+}
+
 // LastGoodFresh reports whether the recorded address is still within TTL.
 func (s State) LastGoodFresh(now time.Time) bool {
 	if s.LastGood == "" || s.At.IsZero() {

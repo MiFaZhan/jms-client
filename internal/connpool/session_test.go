@@ -363,3 +363,140 @@ func TestSessionPoolNilReceiverIsSafe(t *testing.T) {
 		t.Fatalf("nil pool Close() = %v, want nil", err)
 	}
 }
+
+// TestSessionPoolReloginsWhenTheAddressChanged pins the fix for a
+// long-lived process pinning itself to an endpoint the failover policy had
+// already abandoned.
+//
+// The pool key is the alias, but the session is bound to an address. A
+// caller that re-runs the policy (the MCP server does this on every tool
+// call) must not be handed a session pointing at the old address: every KoKo
+// connection derived from it would keep dialing an endpoint that answers
+// 302, while a fresh CLI process — whose pool is empty — worked fine.
+func TestSessionPoolReloginsWhenTheAddressChanged(t *testing.T) {
+	first := newLoginServer(t)
+	second := newLoginServer(t)
+	p := NewSessionPool()
+	t.Cleanup(func() { _ = p.Close() })
+	srv := testServer()
+
+	internal, err := p.Get(context.Background(), srv, first.URL, creds(), nil)
+	if err != nil {
+		t.Fatalf("Get(internal) = %v, want nil", err)
+	}
+
+	external, err := p.Get(context.Background(), srv, second.URL, creds(), nil)
+	if err != nil {
+		t.Fatalf("Get(external) = %v, want nil", err)
+	}
+	if external == internal {
+		t.Fatal("Get() returned the session bound to the old address")
+	}
+	if external.BaseURL != second.URL {
+		t.Fatalf("session BaseURL = %q, want %q", external.BaseURL, second.URL)
+	}
+	if got := second.logins(); got != 1 {
+		t.Fatalf("logins against the new address = %d, want 1", got)
+	}
+
+	// The stale session must not come back on a third call: the pool has to
+	// keep answering with the address the caller is asking for.
+	again, err := p.Get(context.Background(), srv, second.URL, creds(), nil)
+	if err != nil {
+		t.Fatalf("third Get() = %v, want nil", err)
+	}
+	if again != external {
+		t.Fatal("third Get() did not reuse the session for the requested address")
+	}
+	if got := second.logins(); got != 1 {
+		t.Fatalf("logins against the new address = %d, want 1 (the third call must hit the pool)", got)
+	}
+}
+
+// TestSessionPoolReloginIsReportedAsRelogin asserts an address change is
+// visible in the audit stream as a relogin, not as a first login: a reader
+// must be able to tell "the endpoint moved" from "this is a new server".
+func TestSessionPoolReloginIsReportedAsRelogin(t *testing.T) {
+	first := newLoginServer(t)
+	second := newLoginServer(t)
+	p := NewSessionPool()
+	t.Cleanup(func() { _ = p.Close() })
+	srv := testServer()
+
+	var mu sync.Mutex
+	var kinds []EventKind
+	p.Notify = func(ev Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		kinds = append(kinds, ev.Kind)
+	}
+
+	if _, err := p.Get(context.Background(), srv, first.URL, creds(), nil); err != nil {
+		t.Fatalf("Get(internal) = %v, want nil", err)
+	}
+	if _, err := p.Get(context.Background(), srv, second.URL, creds(), nil); err != nil {
+		t.Fatalf("Get(external) = %v, want nil", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(kinds) != 2 {
+		t.Fatalf("events = %v, want two logins", kinds)
+	}
+	if kinds[0] != KindLogin {
+		t.Fatalf("first event = %q, want %q", kinds[0], KindLogin)
+	}
+	if kinds[1] != KindRelogin {
+		t.Fatalf("second event = %q, want %q (the address changed)", kinds[1], KindRelogin)
+	}
+}
+
+// TestSessionPoolAddressComparisonNormalizes guards the comparison itself: a
+// trailing slash or a missing scheme is the same endpoint, so it must not
+// cost a login.
+func TestSessionPoolAddressComparisonNormalizes(t *testing.T) {
+	ls := newLoginServer(t)
+	p := NewSessionPool()
+	t.Cleanup(func() { _ = p.Close() })
+	srv := testServer()
+
+	first, err := p.Get(context.Background(), srv, ls.URL, creds(), nil)
+	if err != nil {
+		t.Fatalf("Get() = %v, want nil", err)
+	}
+	again, err := p.Get(context.Background(), srv, ls.URL+"/", creds(), nil)
+	if err != nil {
+		t.Fatalf("Get() with a trailing slash = %v, want nil", err)
+	}
+	if again != first {
+		t.Fatal("a trailing slash was treated as a different endpoint")
+	}
+	if got := ls.logins(); got != 1 {
+		t.Fatalf("API logins = %d, want 1", got)
+	}
+}
+
+// TestSessionPoolEmptyAddressAcceptsCachedSession keeps the callers that do
+// not care which address they get (a hand-built session, or a test seam)
+// working: an empty baseURL must not invalidate anything.
+func TestSessionPoolEmptyAddressAcceptsCachedSession(t *testing.T) {
+	ls := newLoginServer(t)
+	p := NewSessionPool()
+	t.Cleanup(func() { _ = p.Close() })
+	srv := testServer()
+
+	first, err := p.Get(context.Background(), srv, ls.URL, creds(), nil)
+	if err != nil {
+		t.Fatalf("Get() = %v, want nil", err)
+	}
+	again, err := p.Get(context.Background(), srv, "", creds(), nil)
+	if err != nil {
+		t.Fatalf("Get(\"\") = %v, want nil", err)
+	}
+	if again != first {
+		t.Fatal("an empty baseURL forced a new login")
+	}
+	if got := ls.logins(); got != 1 {
+		t.Fatalf("API logins = %d, want 1", got)
+	}
+}

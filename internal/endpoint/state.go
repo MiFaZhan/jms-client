@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -159,6 +160,25 @@ func (s State) BackendFor(kind Kind) string {
 		return ""
 	}
 	return s.Backend[kind]
+}
+
+// WithBackend records backend as the one that worked for kind, preserving
+// the last-good address memory. An empty backend is ignored, so a caller
+// that never observed one cannot erase what an earlier run learned.
+//
+// It is the write half of the backend memory: the CLI records what it used,
+// and a long-lived MCP host reads it back instead of starting from the
+// compiled-in default (DESIGN.md「端点故障转移」第 4 点).
+func (s State) WithBackend(kind Kind, backend string) State {
+	backend = strings.TrimSpace(backend)
+	if kind == "" || backend == "" {
+		return s
+	}
+	if s.Backend == nil {
+		s.Backend = map[Kind]string{}
+	}
+	s.Backend[kind] = backend
+	return s
 }
 
 // Touch records a successful selection of kind at at, preserving the

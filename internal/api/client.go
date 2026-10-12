@@ -114,13 +114,25 @@ func New(baseURL string) *Client {
 func NewWithProxy(baseURL string, px netproxy.Proxy) *Client {
 	jar, _ := cookiejar.New(nil)
 	return &Client{
-		baseURL: normalizeBaseURL(baseURL),
+		baseURL: NormalizeBaseURL(baseURL),
 		http: &http.Client{
 			Timeout:   DefaultTimeout,
 			Jar:       jar,
 			Transport: px.Transport(),
 		},
 	}
+}
+
+// NormalizeBaseURL trims whitespace, strips trailing slashes and adds
+// https:// when the scheme is missing.
+//
+// It is exported so callers that hold an address from somewhere else — a
+// server configuration entry, a candidate chosen by the failover policy, or
+// the address a cached session is bound to — can compare addresses the way
+// the HTTP client does. Two spellings of one address must not look like two
+// endpoints (DESIGN.md「端点故障转移」第 1 点).
+func NormalizeBaseURL(raw string) string {
+	return normalizeBaseURL(raw)
 }
 
 // normalizeBaseURL trims whitespace, strips trailing slashes and adds
