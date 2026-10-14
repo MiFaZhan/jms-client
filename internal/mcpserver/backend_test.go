@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -275,6 +276,43 @@ func TestEndpointOverride(t *testing.T) {
 	}
 }
 
+// TestExecTimeoutOverride pins the third escape hatch and, more importantly,
+// the default it replaces: an agent that omits `timeout` must not be capped
+// at the Python tool's 30s, which cut off builds and deploys a human would
+// have waited out.
+func TestExecTimeoutOverride(t *testing.T) {
+	t.Setenv(EnvExecTimeout, "")
+	if got, err := execTimeout(); err != nil || got != DefaultExecTimeout {
+		t.Fatalf("execTimeout() = (%v, %v), want (%v, nil) with no override", got, err, DefaultExecTimeout)
+	}
+	if DefaultExecTimeout < time.Minute {
+		t.Fatalf("DefaultExecTimeout = %v, want at least a minute", DefaultExecTimeout)
+	}
+
+	t.Setenv(EnvExecTimeout, "90s")
+	if got, err := execTimeout(); err != nil || got != 90*time.Second {
+		t.Fatalf("execTimeout() = (%v, %v), want (1m30s, nil)", got, err)
+	}
+
+	// A bare number is seconds, matching the CLI's -t flag.
+	t.Setenv(EnvExecTimeout, "120")
+	if got, err := execTimeout(); err != nil || got != 2*time.Minute {
+		t.Fatalf("execTimeout() = (%v, %v), want (2m, nil)", got, err)
+	}
+
+	// A malformed or non-positive value is reported, never silently ignored:
+	// falling back to the default would leave the operator believing a
+	// ceiling they never got.
+	for _, bad := range []string{"soon", "0", "-30s"} {
+		t.Setenv(EnvExecTimeout, bad)
+		if _, err := execTimeout(); err == nil {
+			t.Errorf("%s=%q was accepted", EnvExecTimeout, bad)
+		} else if !strings.Contains(err.Error(), EnvExecTimeout) {
+			t.Errorf("error %v does not name the variable", err)
+		}
+	}
+}
+
 // TestRememberBackendRoundTrips records what worked so the next cold start —
 // in this process or any CLI invocation — goes straight to it.
 func TestRememberBackendRoundTrips(t *testing.T) {
@@ -335,6 +373,10 @@ func TestRecoverableClassifiesFailures(t *testing.T) {
 		context.Canceled,
 		context.DeadlineExceeded,
 		transport.ErrUnsupported,
+		// A command that outran its timeout already reached the remote host;
+		// replaying it would run it twice (DESIGN.md「TerminalPool」第 5 点).
+		transport.ErrCommandTimeout,
+		fmt.Errorf("command timed out after 5m0s: %w", transport.ErrCommandTimeout),
 	}
 	for _, err := range terminal {
 		if recoverable(ctx, err) {

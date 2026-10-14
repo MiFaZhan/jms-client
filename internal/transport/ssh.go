@@ -264,7 +264,7 @@ func (t *sshTerminal) Execute(ctx context.Context, cmd string, timeout time.Dura
 		session.Close()
 		<-waited
 		return Result{Output: output.String()}, fmt.Errorf(
-			"command timed out after %s: %w", timeout, context.DeadlineExceeded)
+			"command timed out after %s: %w", timeout, ErrCommandTimeout)
 	}
 }
 

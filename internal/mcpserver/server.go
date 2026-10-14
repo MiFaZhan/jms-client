@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +67,15 @@ const (
 	EnvEndpoint = "JMS_MCP_ENDPOINT"
 )
 
+// EnvExecTimeout overrides DefaultExecTimeout for the whole MCP process.
+//
+// Like EnvBackend and EnvEndpoint, it exists because an MCP client launches
+// one long-lived process and cannot pass a flag per call: without it, tuning
+// the ceiling meant editing the build or teaching every caller to pass
+// `timeout` explicitly. The value is a Go duration ("90s", "10m") or a bare
+// number of seconds.
+const EnvExecTimeout = "JMS_MCP_EXEC_TIMEOUT"
+
 // backendOverride reads EnvBackend. An unset or empty value means "no
 // override", which keeps the remembered-backend policy in charge; an invalid
 // value is reported so a typo is not silently ignored.
@@ -97,9 +107,58 @@ func endpointOverride() (endpoint.Kind, error) {
 	}
 }
 
-// DefaultExecTimeout bounds one jms_exec call when the client omits
-// timeout. It matches the Python tool's default (30s).
-const DefaultExecTimeout = 30 * time.Second
+// execTimeout resolves the ceiling for one jms_exec call that carried no
+// explicit timeout: EnvExecTimeout when set and valid, DefaultExecTimeout
+// otherwise.
+//
+// A malformed override is reported rather than ignored, matching
+// backendOverride: silently falling back to the default would leave the
+// operator believing a ceiling they never got. A non-positive value is
+// rejected for the same reason DefaultExecTimeout is not zero — the timeout
+// is the only defence against a command that swallows its status marker.
+func execTimeout() (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(EnvExecTimeout))
+	if raw == "" {
+		return DefaultExecTimeout, nil
+	}
+	d, err := parseExecTimeout(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s=%q: %w", EnvExecTimeout, raw, err)
+	}
+	return d, nil
+}
+
+// parseExecTimeout accepts a Go duration ("90s", "10m") or a bare number of
+// seconds, mirroring the CLI's `-t` flag so the two surfaces read alike.
+func parseExecTimeout(raw string) (time.Duration, error) {
+	if secs, err := strconv.Atoi(raw); err == nil {
+		if secs <= 0 {
+			return 0, errors.New("must be positive")
+		}
+		return time.Duration(secs) * time.Second, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, errors.New(`must be a duration ("90s", "10m") or a positive number of seconds`)
+	}
+	if d <= 0 {
+		return 0, errors.New("must be positive")
+	}
+	return d, nil
+}
+
+// DefaultExecTimeout bounds one jms_exec call when the client omits timeout.
+//
+// Five minutes, not the Python tool's 30s: the MCP surface is driven by an
+// agent that cannot see how long a command will take, and 30s cut off builds,
+// deploys and package installs that a human would have waited out. The value
+// mirrors ipc.execTimeout, which bounds an operator command the same way.
+//
+// The ceiling still exists on purpose — DESIGN.md「KoKo 协议」notes that a
+// command ending in '#' or '\', or with unbalanced quotes, swallows the
+// status marker and hangs, and the timeout is the only defence. EnvExecTimeout
+// raises or lowers it without a rebuild.
+const DefaultExecTimeout = 5 * time.Minute
 
 // ServerName is the MCP implementation name.
 const ServerName = "jms"
@@ -688,6 +747,13 @@ func recoverable(ctx context.Context, err error) bool {
 	if errors.Is(err, transport.ErrUnsupported) {
 		return false
 	}
+	// A command that outran its timeout has already reached the remote host.
+	// Retrying it would run it a second time, which is the replay the pool
+	// forbids: rm and reboot are not idempotent. A *connect* timeout is a
+	// different error and stays retryable — it never delivered anything.
+	if errors.Is(err, transport.ErrCommandTimeout) {
+		return false
+	}
 	// A credential rejection is terminal: a fresh login would be rejected the
 	// same way, and retrying it would only prompt for MFA twice.
 	if authErr, ok := api.AsAuthError(err); ok {
@@ -978,7 +1044,7 @@ func (s *Server) execTool() (*mcp.Tool, mcp.ToolHandler) {
 			"command":     strProp("Shell command to run."),
 			"server":      strProp("Server alias; the default server when omitted."),
 			"config_path": strProp("Configuration file path override."),
-			"timeout":     intProp("Timeout in seconds; 30 when omitted."),
+			"timeout":     intProp("Timeout in seconds; 300 when omitted (override with JMS_MCP_EXEC_TIMEOUT)."),
 			"account":     strProp("Account override."),
 			"protocol":    strProp("Protocol override."),
 		}),
@@ -998,7 +1064,10 @@ func (s *Server) execTool() (*mcp.Tool, mcp.ToolHandler) {
 
 		timeout := time.Duration(args.Timeout) * time.Second
 		if args.Timeout <= 0 {
-			timeout = DefaultExecTimeout
+			var err error
+			if timeout, err = execTimeout(); err != nil {
+				return errorResult(err), nil
+			}
 		}
 
 		sess, srv, err := s.sessionFor(ctx, serverName, args.ConfigPath)

@@ -345,6 +345,19 @@ func (t *wsTerminal) Execute(ctx context.Context, cmd string, timeout time.Durat
 	return t.readUntilMarkers(ctx, marker, timeout)
 }
 
+// commandTimeout builds the error for a command that outran its deadline.
+//
+// It wraps ErrCommandTimeout so callers can classify it, and carries the
+// DESIGN.md「KoKo 协议」hint because a marker-swallowing command (`#` or `\`
+// terminator, unbalanced quotes) looks exactly like a slow one from here:
+// the marker never arrives either way. A real timeout says so in the text;
+// a swallowed marker is a command that would have run forever.
+func commandTimeout(timeout time.Duration) error {
+	return fmt.Errorf(
+		"websocket: command did not complete within %s — either it is still running, or it ends in '#' or '\\' (or has unbalanced quotes) and swallowed the status marker: %w",
+		timeout, ErrCommandTimeout)
+}
+
 // ansiPattern matches the escape sequences a PTY emits around command echo.
 //
 // It mirrors the reference implementation's ANSI_RE. Without stripping, a real
@@ -405,8 +418,7 @@ func (t *wsTerminal) readUntilMarkers(ctx context.Context, marker string, timeou
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return Result{Output: extractBetween(stream.String(), marker)},
-				fmt.Errorf("websocket: command did not complete within %s — a command ending in '#' or '\\', or with unbalanced quotes, swallows the status marker", timeout)
+			return Result{Output: extractBetween(stream.String(), marker)}, commandTimeout(timeout)
 		}
 		_ = t.conn.SetReadDeadline(time.Now().Add(remaining))
 
@@ -419,8 +431,7 @@ func (t *wsTerminal) readUntilMarkers(ctx context.Context, marker string, timeou
 			// pitfall rather than an opaque transport error, because that is
 			// the overwhelmingly common cause.
 			if isTimeout(err) {
-				return Result{Output: extractBetween(stream.String(), marker)},
-					fmt.Errorf("websocket: command did not complete within %s — a command ending in '#' or '\\', or with unbalanced quotes, swallows the status marker", timeout)
+				return Result{Output: extractBetween(stream.String(), marker)}, commandTimeout(timeout)
 			}
 			return Result{Output: extractBetween(stream.String(), marker)},
 				fmt.Errorf("websocket read: %w", err)

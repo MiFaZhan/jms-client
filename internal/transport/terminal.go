@@ -52,6 +52,17 @@ const (
 // ErrUnsupported reports a backend name that is not one of the three above.
 var ErrUnsupported = errors.New("unsupported backend")
 
+// ErrCommandTimeout reports a command that exceeded the caller's timeout.
+//
+// The backends return it wrapped, and it is deliberately distinct from the
+// net timeout a *connect* produces: a connect that timed out may succeed on
+// another endpoint or backend, so the caller is free to retry it, but a
+// command that timed out has already been delivered to the remote host.
+// Replaying it is not safe — `rm` and `reboot` are not idempotent — so the
+// classification has to be able to tell the two apart (DESIGN.md「TerminalPool」
+// 第 5 点: a command that produced output is never sent again).
+var ErrCommandTimeout = errors.New("command timeout")
+
 // Result is the outcome of one non-interactive command.
 type Result struct {
 	Output   string

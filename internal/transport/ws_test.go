@@ -112,6 +112,12 @@ func TestWSTimeoutOnMissingMarker(t *testing.T) {
 	if !strings.Contains(err.Error(), "unbalanced quotes") {
 		t.Fatalf("error = %v, want it to reference the swallowed-marker pitfall", err)
 	}
+	// The error must be classifiable: the MCP layer refuses to replay a
+	// command that timed out, and it tells that apart from a connect timeout
+	// by this sentinel (DESIGN.md「TerminalPool」第 5 点).
+	if !errors.Is(err, ErrCommandTimeout) {
+		t.Fatalf("error = %v, want it to wrap ErrCommandTimeout", err)
+	}
 }
 
 // TestWSKeepaliveSendsApplicationLevelPing pins the heartbeat: it must be an
