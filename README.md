@@ -16,6 +16,11 @@ active
 
 **English** · [简体中文](README.zh-CN.md)
 
+**Docs:** [Command reference](docs/command-reference.md) ·
+[Addresses and proxies](docs/networking.md) ·
+[Troubleshooting](docs/troubleshooting.md) ·
+[Design](DESIGN.md)
+
 ---
 
 ## Why this exists
@@ -200,123 +205,25 @@ Two behaviours worth knowing when you write prompts for an agent:
 - **A non-zero exit code is not reported as a failure.** `jms_exec` returns the command's output; the remote exit status is recorded in the audit log but not surfaced in the tool result. If your agent must branch on success, make the command say so (`… && echo OK || echo FAIL`).
 - **Commands are never replayed.** If a call fails after the command was already delivered to the host, the client reports the error instead of retrying, because `rm`, `reboot` and friends are not idempotent. A dropped connection triggers one recovery attempt through a fresh login, but only for a command that produced no output at all.
 
-## Command reference
-
-```
-jms config  add | list | remove | set-default | test    Server metadata and credentials
-jms ls      [server] [-q keyword] [-n limit] [--endpoint]   List or search assets
-jms exec    <target> <command...> [flags]               Run one command
-jms login   <target> [flags]                            Interactive shell
-jms sftp    <src> <dst> [flags]                         Upload or download a file
-jms ssh-pipe <target> [command...]                      Bridge stdio to an asset (rsync -e)
-jms tail    [-f] [--json] [--last N]                    Follow the local audit stream
-jms attach  [--attach] [--asset] [--last]               Watch a running host, optionally join
-jms log     show [--since] [--asset] [--failed] [--export md]   Query the audit log as a file
-jms mcp     [--print-config]                            Run the stdio MCP server
-jms version                                             Print version information
-```
-
-**Target syntax.** `<asset>@<server>` names an asset on a specific server; omitting `@<server>` uses the default server. The last `@` separates the two, so an asset name may contain `@`.
-
-### `jms config`
+## Commands at a glance
 
 | Command | What it does |
 |---|---|
-| `add <alias>` | Prompt for addresses, username, password and an optional TOTP secret; validate, then store. `--set-default` also makes it the default. |
-| `list` | One row per server, with the address(es), username, credential source, and which is the default. Warns on stderr about any server whose password is missing. |
-| `remove <alias>` | Delete the server and its stored credentials. `-y` skips the confirmation. |
-| `set-default <alias>` | Change the default server. |
-| `test [alias]` | Probe every configured address and attempt a login on the first reachable one. |
+| `jms config add \| list \| remove \| set-default \| test` | Manage server entries and their credentials. |
+| `jms ls [server] [-q keyword]` | List or search authorized assets. |
+| `jms exec <target> <command...>` | Run one command on an asset. |
+| `jms login <target>` | Open an interactive shell. |
+| `jms sftp <src> <dst>` | Upload or download a file. |
+| `jms ssh-pipe <target> [command...]` | Bridge stdio to an asset (for `rsync -e`). |
+| `jms tail [-f]` | Follow the local audit stream. |
+| `jms attach` | Watch a running host, optionally joining its session. |
+| `jms log show` | Query the audit log. |
+| `jms mcp` | Run the stdio MCP server. |
 
-A configuration file with no servers is never written — `jms config add` would otherwise be unable to read back its own file. Removing your **last** server therefore deletes the file outright, returning you to the pre-`add` state, and reports `no servers remain`.
+Target syntax is `<asset>@<server>`; omitting `@<server>` uses the default server.
 
-### `jms ls`
-
-| Flag | Meaning |
-|---|---|
-| `-q`, `--search` | Keyword to search for; lists everything when omitted. |
-| `-n`, `--limit` | Maximum number of results (default 50). |
-| `--endpoint` | Force `internal` or `external`. |
-
-The chosen address is printed to **stderr**, so stdout stays a clean table you can pipe.
-
-### `jms exec`
-
-| Flag | Meaning |
-|---|---|
-| `-t`, `--timeout` | Timeout in **seconds**. See the note below — the default is not unlimited. |
-| `--backend` | `ws`, `ssh` or `auto` (default `ws`). |
-| `--endpoint` | Force `internal` or `external`. |
-| `--account`, `--protocol` | Override the account or protocol used to reach the asset. |
-
-The command is passed through as one argument; quoting is yours to do:
-
-```sh
-jms exec web-01 'df -h /'                 # good: one argument
-jms exec web-01 df -h /                   # WRONG: -h is parsed by jms, not by the host
-jms exec web-01 -- nginx -t               # use -- when the remote command starts with a dash
-```
-
-The remote exit code becomes the exit code of `jms`, so this works:
-
-```sh
-jms exec web-01 "test -f /etc/app.conf" && echo "present"
-```
-
-Diagnostics (`Using external endpoint …`, `Command exited with status N`) go to stderr, keeping stdout pure command output for `$(…)` capture.
-
-> **The default timeout depends on the backend.** With the WebSocket backend, `jms exec` without `-t` is capped at **30 seconds**, and a longer command fails with a "did not complete within 30s" error. Pass `-t` for anything slower:
->
-> ```sh
-> jms exec -t 600 web-01 "./build.sh"
-> ```
->
-> The MCP `jms_exec` tool defaults to **5 minutes** instead, tunable with `JMS_MCP_EXEC_TIMEOUT`. A command ending in `#` or `\`, or with unbalanced quotes, can swallow the status marker and will also hit the timeout — the error message says so, because from the client's side it looks identical to a slow command.
-
-### `jms login`
-
-Opens an interactive shell and attaches your terminal. The session belongs to that process and is not pooled. `Ctrl+]` exits. `--timing` prints a breakdown of the login stages, which is the first thing to reach for when a connection is slow.
-
-> **`jms login` forces the external address by default.** It does not fall back to the internal one, and on a server that only has an internal address it fails with `server "…" has no external address configured`. Pass `--endpoint internal` if your bastion has no external address. Other commands (`ls`, `exec`, `sftp`) apply the normal failover policy instead.
-
-### `jms sftp`
-
-Exactly one side must be a remote spec (`<asset>[@<server>]:<path>`); the direction is inferred from which side is remote. Two local paths are an error — use `cp`.
-
-| Flag | Meaning |
-|---|---|
-| `--verify` / `--no-verify` | MD5 verification. **On by default**; `--verify` exists only for symmetry. |
-| `--chunk` | Chunk size in bytes (default 1 MiB). |
-| `--parallel` | Concurrent chunk streams (default 4). |
-| `--account`, `--endpoint` | Override the account or forced address. |
-
-```sh
-jms sftp web-01:/var/log/app.log ./app.log     # download
-jms sftp ./app.yml web-01:/etc/app/app.yml     # upload
-```
-
-**Not yet available from the CLI:** recursive directory transfers (`-R`) and asset-to-asset relay. The flags and help text mention them, but the command returns an error rather than copying through a local temporary file. For asset-to-asset moves, use the MCP tool `jms_sftp_relay`, or go through your local machine with two `jms sftp` calls. Requiring KoKo's SSH port (default 2222) to be reachable.
-
-### `jms ssh-pipe`
-
-Bridges stdin/stdout to an asset, speaking the remote side of the protocol on stdout. It exists so `rsync` can transfer through the bastion:
-
-```sh
-rsync -av -e "jms ssh-pipe" ./dist/ web-01:/opt/app/dist/
-```
-
-Nothing but protocol bytes is written to stdout; all diagnostics go to stderr.
-
-### Observing what ran
-
-| Command | Use |
-|---|---|
-| `jms tail -f` | Follow the audit stream live. `--json` for raw JSONL, `--last N` to start with history. |
-| `jms attach` | Watch a running `jms mcp` host's event stream. Observation only by default. |
-| `jms attach --attach` | Also enable the operator prompt, so you can run commands on the host's pooled connections. |
-| `jms log show` | Read the log as a file: returns immediately. `--since 1h`, `--asset`, `--failed`, `--export md`. |
-
-`jms attach` deliberately refuses input unless you pass `--attach`, so a window left open cannot turn a stray keystroke into a command on a production host. Operator commands and AI commands share one pool and serialize on the same connection rather than racing for it.
+**Full reference:** [docs/command-reference.md](docs/command-reference.md) ·
+[简体中文](docs/command-reference.zh-CN.md)
 
 ## Configuration
 
@@ -354,21 +261,10 @@ prefer = "external"
 
 Every field except the username is optional, but at least one address is required.
 
-### How an address is chosen
+When a server has both addresses, the client probes them in turn and logs into the first that answers, remembering the last-good one for ten minutes. The client **connects directly by default** and ignores `HTTP_PROXY` and friends — a proxy must be configured explicitly.
 
-When a server has both addresses, the client:
-
-1. Puts the remembered last-good address first (kept for 10 minutes in `state.json`).
-2. Orders the rest by `prefer` (default: internal first).
-3. Probes each candidate with a 1.5-second TCP connect.
-4. Logs into the first one that answers.
-
-Failure to reach one address does not fail the command — it moves to the next. Two deliberate exceptions:
-
-- **Authentication errors (401/403) never trigger a failover.** If the password is wrong, the other address would refuse it too.
-- **`pin` disables failover entirely.** Use it when you know which network you are on and would rather see an honest error than a silent fallback.
-
-A failed connection re-reads the state file and retries once through a fresh login, but only if the command had not already started producing output.
+**Details:** [docs/networking.md](docs/networking.md) ·
+[简体中文](docs/networking.zh-CN.md)
 
 ### Credentials
 
@@ -388,26 +284,7 @@ For headless environments (containers, CI, WSL without a Secret Service) there a
 
 Aliases are upper-cased and `-` becomes `_`, so `bastion-eu` becomes `JMS_PASSWORD_BASTION_EU`. An exported-but-empty variable counts as unset rather than as an empty password. If neither source has a credential, the command fails with a message naming the variable to set — it never falls back to storing a plaintext password.
 
-One case is worth calling out on its own: **the credential store exists but is locked**, which is the usual state of a GNOME Keyring on a machine with no desktop session. Commands then fail within milliseconds with a "credential store is locked" message and the environment variable to set as the way out, rather than hanging on an unlock prompt that nobody can answer. To see which stage a run reached, add `--timing`.
-
-### Proxy policy
-
-**The client connects directly by default and ignores `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`.**
-
-This is a deliberate departure from the usual convention. On developer machines those variables are frequently exported globally by a transparent-proxy tool, and its own `DIRECT` rules often match the bastion's address — so requests leave through a proxy nobody asked for, and the proxy's failures (typically a 502 with an empty body) are reported as if they came from the network. Worse, the TCP probe and the actual login would then be testing two different network paths.
-
-To route through a proxy, say so explicitly, either globally or per server:
-
-```toml
-proxy = "socks5://127.0.0.1:1080"   # http, https, socks5 and socks5h are accepted
-```
-
-```toml
-[servers.bastion]
-proxy = "direct"                    # override a global proxy for this server
-```
-
-Configured proxies take precedence over the environment; `NO_PROXY` is not consulted for them either.
+A locked credential store (the usual state of a GNOME Keyring with no desktop session) fails in milliseconds with a message naming the environment variable to set — see [troubleshooting](docs/troubleshooting.md).
 
 ### Environment variables
 
@@ -453,35 +330,6 @@ Event kinds: `exec.start`, `exec.end`, `pool.cold`, `pool.hit`, `pool.evict`, `p
 
 Output previews are truncated to 4096 bytes by default (`JMS_AUDIT_PREVIEW_BYTES`, or `JMS_AUDIT_FULL=1` for everything). Nothing in the log interpolates a credential.
 
-## Troubleshooting
-
-**`server "…" has no external address configured`**
-You ran `jms login` against a server with only an internal address. Add `--endpoint internal`.
-
-**`command did not complete within 30s`**
-You are on the WebSocket backend (the default) and the command ran longer than the default timeout. Raise it with `-t`. If the command ends in `#` or `\` or has unbalanced quotes, the client never sees its completion marker — the same error appears; rewrite the command so it terminates normally.
-
-**`no reachable endpoint: … probe failed`**
-Neither address answered a TCP connect. Check that the address in your config is the one you reach from your current network, that a VPN is connected if one is required, and that the port is right. Run `jms config test` for a per-address breakdown.
-
-**Requests go through a proxy you did not configure**
-They should not: the client ignores `HTTP_PROXY` and friends. If you see a proxy error anyway, it is a configured `proxy` value in the config file, or a transparent interception at the network level. Remove the config entry, or force `proxy = "direct"`.
-
-**SFTP or SSH fails while `exec` works**
-KoKo's SSH port (default 2222) is probably blocked. SFTP and the `ssh` backend both ride on it; the WebSocket backend does not.
-
-**`jms login` renders garbage or leaves my terminal broken**
-Reported mainly on older Windows consoles. `jms login` restores your console mode on exit; if a crash left it in raw mode, `reset` (Unix) or closing the terminal (Windows) recovers it.
-
-**The password prompt fails in a container**
-There is no OS credential store there. Set `JMS_PASSWORD_<ALIAS>` instead, or set up a Secret Service. `jms config list` shows where each server's password is coming from.
-
-**Every command works in a shell but an AI client reports an error**
-Check `jms config list` again: the MCP process may be started by a different user or with a different environment, and so may not see your credential store or `JMS_CONFIG`. Pass explicit `env` entries in the MCP client entry.
-
-**A connection worked and then stopped**
-Connections are reaped after 10 minutes idle, and a session's address is re-validated before reuse. A failure re-reads the state file and re-selects the address and backend once. If it persists, restart the MCP host.
-
 ## Limitations
 
 - **JumpServer v4 only.** The v3 authentication and terminal APIs differ.
@@ -489,6 +337,9 @@ Connections are reaped after 10 minutes idle, and a session's address is re-vali
 - **32-bit platforms are not built.** Only x86_64 and arm64.
 - **The audit log is local.** Nothing is forwarded to a central collector; ship the files yourself if you need to aggregate.
 - **A jump-host chain (proxy/jump through another asset) is not implemented.**
+
+**When something goes wrong:** [docs/troubleshooting.md](docs/troubleshooting.md) ·
+[简体中文](docs/troubleshooting.zh-CN.md)
 
 ## Development
 

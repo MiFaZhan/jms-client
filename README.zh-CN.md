@@ -16,6 +16,11 @@ active
 
 [English](README.md) · **简体中文**
 
+**文档：** [命令参考](docs/command-reference.zh-CN.md) ·
+[地址与代理](docs/networking.zh-CN.md) ·
+[排障](docs/troubleshooting.zh-CN.md) ·
+[设计](DESIGN.md)
+
 ---
 
 ## 为什么做这个
@@ -200,123 +205,25 @@ jms mcp --print-config
 - **非零退出码不会被当成失败。** `jms_exec` 返回的是命令输出；远端退出状态会记进审计日志，但不会出现在工具结果里。如果 agent 需要据此分支，就让命令自己说出来（`… && echo OK || echo FAIL`）。
 - **命令绝不重放。** 如果失败发生在命令已经投递到远端之后，客户端只上抛错误而不重试 —— `rm`、`reboot` 这类操作不是幂等的。连接断开会触发一次通过重新登录的恢复尝试，但仅限「完全没有产生任何输出」的命令。
 
-## 命令参考
-
-```
-jms config  add | list | remove | set-default | test    服务器元数据与凭据
-jms ls      [server] [-q keyword] [-n limit] [--endpoint]   列出/搜索资产
-jms exec    <target> <command...> [flags]               执行单条命令
-jms login   <target> [flags]                            交互式 shell
-jms sftp    <src> <dst> [flags]                         上传或下载文件
-jms ssh-pipe <target> [command...]                      stdio 桥（供 rsync -e 使用）
-jms tail    [-f] [--json] [--last N]                    跟随本地审计流
-jms attach  [--attach] [--asset] [--last]               观察运行中的宿主，可选接入
-jms log     show [--since] [--asset] [--failed] [--export md]   以文件方式查询审计日志
-jms mcp     [--print-config]                            启动 stdio MCP 服务器
-jms version                                             打印版本信息
-```
-
-**target 语法。** `<资产>@<服务器>` 指定某台服务器上的资产；省略 `@<服务器>` 则用默认服务器。分隔符取**最后一个** `@`，因此资产名本身可以含 `@`。
-
-### `jms config`
+## 命令速查
 
 | 命令 | 作用 |
 |---|---|
-| `add <alias>` | 交互录入地址、用户名、密码与可选 TOTP secret；验证后落盘。`--set-default` 同时设为默认。 |
-| `list` | 每台服务器一行：地址、用户名、凭据来源，以及哪台是默认。凭据缺失的服务器会在 stderr 上告警。 |
-| `remove <alias>` | 删除服务器及其已存凭据。`-y` 跳过确认。 |
-| `set-default <alias>` | 切换默认服务器。 |
-| `test [alias]` | 探测每个已配置地址，并对可达地址尝试登录。 |
+| `jms config add \| list \| remove \| set-default \| test` | 管理服务器配置与凭据。 |
+| `jms ls [server] [-q keyword]` | 列出或搜索有权限的资产。 |
+| `jms exec <target> <command...>` | 在资产上执行一条命令。 |
+| `jms login <target>` | 打开交互式 shell。 |
+| `jms sftp <src> <dst>` | 上传或下载文件。 |
+| `jms ssh-pipe <target> [command...]` | 把 stdio 接到资产上（供 `rsync -e` 用）。 |
+| `jms tail [-f]` | 跟踪本地审计流。 |
+| `jms attach` | 观察运行中的宿主，可选择接入其会话。 |
+| `jms log show` | 查询审计日志。 |
+| `jms mcp` | 运行 stdio MCP 服务。 |
 
-配置文件里一个服务器都没有的状态是写不出去的 —— 否则 `jms config add` 之后读不回自己的文件。因此删除**最后一台**服务器会直接删掉配置文件，回到 `add` 之前的状态，并提示 `no servers remain`。
+目标语法是 `<asset>@<server>`；省略 `@<server>` 则用默认服务器。
 
-### `jms ls`
-
-| 参数 | 含义 |
-|---|---|
-| `-q`, `--search` | 搜索关键词；省略则全量列出。 |
-| `-n`, `--limit` | 最大结果数（默认 50）。 |
-| `--endpoint` | 强制 `internal` 或 `external`。 |
-
-选中的地址打印到 **stderr**，因此 stdout 是一张干净的、可直接管道的表。
-
-### `jms exec`
-
-| 参数 | 含义 |
-|---|---|
-| `-t`, `--timeout` | 超时（单位：**秒**）。注意下面那条说明 —— 默认值不是「无限」。 |
-| `--backend` | `ws`、`ssh` 或 `auto`（默认 `ws`）。 |
-| `--endpoint` | 强制 `internal` 或 `external`。 |
-| `--account`、`--protocol` | 覆盖访问该资产所用的账号或协议。 |
-
-命令作为**一个**参数透传，引号由你负责：
-
-```sh
-jms exec web-01 'df -h /'                 # 正确：单个参数
-jms exec web-01 df -h /                   # 错误：-h 被 jms 解析了，不是远端
-jms exec web-01 -- nginx -t               # 远端命令以短横线开头时，用 -- 隔开
-```
-
-远端退出码会成为 `jms` 的退出码，所以这样写是有效的：
-
-```sh
-jms exec web-01 "test -f /etc/app.conf" && echo "present"
-```
-
-诊断信息（`Using external endpoint …`、`Command exited with status N`）都走 stderr，保证 stdout 只有命令输出，方便 `$(…)` 捕获。
-
-> **默认超时取决于后端。** 在 WebSocket 后端（默认）下，不带 `-t` 的 `jms exec` 会被**硬性限制在 30 秒**，更慢的命令会以「did not complete within 30s」失败。凡是耗时可能超过 30 秒的，请显式指定 `-t`：
->
-> ```sh
-> jms exec -t 600 web-01 "./build.sh"
-> ```
->
-> MCP 的 `jms_exec` 工具默认是 **5 分钟**，可用 `JMS_MCP_EXEC_TIMEOUT` 调整。另外，以 `#` 或 `\` 结尾、或引号不闭合的命令会吞掉状态标记，同样会撞上超时 —— 错误信息里会提示这种可能，因为从客户端看，它和「命令太慢」长得完全一样。
-
-### `jms login`
-
-打开交互式 shell 并接管本地终端。会话属于该进程，不进连接池。`Ctrl+]` 退出。`--timing` 会打印各阶段耗时，是排查连接慢时第一个该用的东西。
-
-> **`jms login` 默认强制走 external 地址。** 它不会退回 internal，在没有外网地址的服务器上会直接失败：`server "…" has no external address configured`。如果你的堡垒机只有内网地址，请加 `--endpoint internal`。其他命令（`ls`、`exec`、`sftp`）走的是正常的故障转移策略。
-
-### `jms sftp`
-
-必须恰好有一侧是远端写法（`<资产>[@<服务器>]:<路径>`），方向由哪一侧是远端推断。两侧都是本地路径会报错 —— 那种情况请用 `cp`。
-
-| 参数 | 含义 |
-|---|---|
-| `--verify` / `--no-verify` | MD5 校验。**默认开启**；`--verify` 只是为了对称而存在。 |
-| `--chunk` | 分块大小（默认 1 MiB）。 |
-| `--parallel` | 并发分块流数量（默认 4）。 |
-| `--account`、`--endpoint` | 覆盖账号或强制地址。 |
-
-```sh
-jms sftp web-01:/var/log/app.log ./app.log     # 下载
-jms sftp ./app.yml web-01:/etc/app/app.yml     # 上传
-```
-
-**CLI 目前尚不支持：** 递归目录传输（`-R`）与资产间直连中转。帮助文本里提到了这两个参数，但实际执行会返回错误，而不是悄悄经本地临时文件中转。资产间传输请用 MCP 工具 `jms_sftp_relay`，或在本地机器上分两次 `jms sftp` 中转。这两项都依赖 KoKo 的 SSH 端口（默认 2222）可达。
-
-### `jms ssh-pipe`
-
-把 stdin/stdout 桥接到资产，stdout 上跑的是协议字节。它存在的意义是让 `rsync` 能穿过堡垒机：
-
-```sh
-rsync -av -e "jms ssh-pipe" ./dist/ web-01:/opt/app/dist/
-```
-
-stdout 上除了协议字节不会有任何东西，所有诊断信息都走 stderr。
-
-### 观察执行记录
-
-| 命令 | 用途 |
-|---|---|
-| `jms tail -f` | 实时跟随审计流。`--json` 输出原始 JSONL，`--last N` 先回放历史。 |
-| `jms attach` | 观察运行中的 `jms mcp` 宿主的事件流。默认只观察。 |
-| `jms attach --attach` | 同时启用操作员提示符，可在宿主的连接池上执行命令。 |
-| `jms log show` | 以文件方式读取日志：立即返回。支持 `--since 1h`、`--asset`、`--failed`、`--export md`。 |
-
-`jms attach` 在你不加 `--attach` 时**故意不接受任何输入**，这样开着的窗口不会因为一次误触就在生产机器上执行命令。操作员命令与 AI 命令共用同一个连接池，在同一条连接上严格串行，而不是互相抢。
+**完整参考：** [docs/command-reference.zh-CN.md](docs/command-reference.zh-CN.md) ·
+[English](docs/command-reference.md)
 
 ## 配置
 
@@ -354,21 +261,10 @@ prefer = "external"
 
 除用户名外每个字段都可选，但至少要有一个地址。
 
-### 地址是怎么选出来的
+一台服务器同时配两个地址时，客户端会依次探测并登录第一个能应答的，并记住上次成功的那个十分钟。客户端**默认直连**，不读 `HTTP_PROXY` 这类环境变量 —— 走代理必须显式配置。
 
-当一台服务器同时配了两个地址时，客户端会：
-
-1. 把记住的上次成功地址排在最前（`state.json` 中保留 10 分钟）。
-2. 其余按 `prefer` 排序（默认内网优先）。
-3. 对每个候选做 1.5 秒 TCP 连接探测。
-4. 对第一个能应答的地址登录。
-
-一个地址不通不会导致命令失败 —— 会自动移向下一个。有两个刻意的例外：
-
-- **认证类错误（401/403）绝不触发故障转移。** 密码错的话，换个地址同样会被拒。
-- **`pin` 完全关闭故障转移。** 当你明确知道自己在哪个网络里，宁愿看到诚实的报错，也不想被静默回退到另一个地址时使用。
-
-连接失败时客户端会重读状态文件、并通过一次全新登录重试一次，但仅限该命令尚未产生任何输出的情况。
+**细节：** [docs/networking.zh-CN.md](docs/networking.zh-CN.md) ·
+[English](docs/networking.md)
 
 ### 凭据
 
@@ -388,26 +284,7 @@ prefer = "external"
 
 别名会转成大写并把 `-` 换成 `_`，因此 `bastion-eu` 对应 `JMS_PASSWORD_BASTION_EU`。已导出但值为空的变量按「未设置」处理，而不是当作空密码。两个来源都没有时会明确报错并指出该设置哪个变量 —— 绝不会静默降级为把密码明文落盘。
 
-还有一种情况值得单独说：**凭据库存在，但被锁住了**（GNOME Keyring 在无桌面会话的机器上常是这个状态）。这时命令会在毫秒内失败并说明「凭据库已锁定」，而不是挂住等一个永远不来的解锁提示 —— 错误信息里会直接给出 `JMS_PASSWORD_<ALIAS>` 作为出路。想知道卡在哪一步，加 `--timing`：
-
-### 代理策略
-
-**默认直连，且不读取 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`。**
-
-这是对常见约定的刻意偏离。开发机上这些变量往往被透明代理工具全局导出，而工具自身的 `DIRECT` 规则又常命中堡垒机地址 —— 结果是请求经由一个没人要求的代理离开进程，代理自己的错误（典型是空 body 的 502）被当成了真实网络结果。更麻烦的是，TCP 探测与真实登录会因此走在两条不同的网络路径上。
-
-需要走代理时请显式配置，可全局也可按服务器：
-
-```toml
-proxy = "socks5://127.0.0.1:1080"   # 支持 http、https、socks5、socks5h
-```
-
-```toml
-[servers.bastion]
-proxy = "direct"                    # 本服务器强制直连，覆盖全局 proxy
-```
-
-已配置的代理优先于环境变量；对它们同样不看 `NO_PROXY`。
+凭据库被锁住时（无桌面会话的机器上 GNOME Keyring 常是这个状态）会在毫秒内失败并指出该设哪个环境变量 —— 见[排障](docs/troubleshooting.zh-CN.md)。
 
 ### 环境变量
 
@@ -453,35 +330,6 @@ JumpServer 的 KoKo 组件提供两种终端通道，`jms-client` 两种都能�
 
 输出预览默认截断到 4096 字节（用 `JMS_AUDIT_PREVIEW_BYTES` 调整，或 `JMS_AUDIT_FULL=1` 记全量）。日志中任何地方都不会插入凭据。
 
-## 排障
-
-**`server "…" has no external address configured`**
-你对一台只有内网地址的服务器执行了 `jms login`。加上 `--endpoint internal`。
-
-**`command did not complete within 30s`**
-你用的是 WebSocket 后端（默认），命令超过了默认超时。用 `-t` 调大。如果命令以 `#` 或 `\` 结尾、或引号不闭合，客户端永远等不到完成标记，报错完全一样 —— 把命令改成能正常结束的形式。
-
-**`no reachable endpoint: … probe failed`**
-两个地址都没能应答 TCP 连接。检查配置里的地址是不是你当前网络能到的那个、需要 VPN 是否已连、端口是否正确。跑 `jms config test` 看逐地址的明细。
-
-**请求走了你没配过的代理**
-理论上不该发生：客户端不读 `HTTP_PROXY` 这类变量。如果真的看到代理报错，那要么是配置文件中配了 `proxy`，要么是网络层面的透明劫持。删掉配置项，或强制 `proxy = "direct"`。
-
-**`exec` 正常但 SFTP / SSH 失败**
-多半是 KoKo 的 SSH 端口（默认 2222）被挡。SFTP 与 `ssh` 后端都跑在它上面，WebSocket 后端不依赖它。
-
-**`jms login` 显示乱码，或退出后终端不正常**
-主要见于较老的 Windows 控制台。`jms login` 会在退出时恢复控制台模式；如果是崩溃导致留在 raw mode，Unix 下 `reset`、Windows 下重开终端即可恢复。
-
-**容器里密码提示失败**
-容器里没有 OS 凭据库。改用 `JMS_PASSWORD_<ALIAS>`，或配置 Secret Service。`jms config list` 会显示每台服务器的密码从哪来。
-
-**shell 里每条命令都正常，AI 客户端却报错**
-再查一遍 `jms config list`：MCP 进程可能由另一个用户或另一套环境启动，因此看不到你的凭据库或 `JMS_CONFIG`。在该 MCP 客户端条目里显式写 `env`。
-
-**连上过，后来就不行了**
-空闲连接 10 分钟后会被回收，会话在复用前会重新校验地址。失败时会重读状态文件并重新选择一次地址与后端。如果持续失败，重启 MCP 宿主。
-
 ## 限制
 
 - **仅支持 JumpServer v4。** v3 的认证与终端接口不同。
@@ -489,6 +337,9 @@ JumpServer 的 KoKo 组件提供两种终端通道，`jms-client` 两种都能�
 - **不构建 32 位平台。** 只有 x86_64 与 arm64。
 - **审计日志是本地的。** 不会转发到集中式收集器；需要汇总请自行搬运这些文件。
 - **尚未实现跳板机链路（经另一台资产中转）。**
+
+**出问题时看这里：** [docs/troubleshooting.zh-CN.md](docs/troubleshooting.zh-CN.md) ·
+[English](docs/troubleshooting.md)
 
 ## 开发
 
