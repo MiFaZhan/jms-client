@@ -388,6 +388,8 @@ For headless environments (containers, CI, WSL without a Secret Service) there a
 
 Aliases are upper-cased and `-` becomes `_`, so `bastion-eu` becomes `JMS_PASSWORD_BASTION_EU`. An exported-but-empty variable counts as unset rather than as an empty password. If neither source has a credential, the command fails with a message naming the variable to set — it never falls back to storing a plaintext password.
 
+One case is worth calling out on its own: **the credential store exists but is locked**, which is the usual state of a GNOME Keyring on a machine with no desktop session. Commands then fail within milliseconds with a "credential store is locked" message and the environment variable to set as the way out, rather than hanging on an unlock prompt that nobody can answer. To see which stage a run reached, add `--timing`.
+
 ### Proxy policy
 
 **The client connects directly by default and ignores `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`.**

@@ -252,6 +252,7 @@ stateDiagram-v2
 - 凭据库：Windows Credential Manager（DPAPI，静默）/ macOS Keychain / Linux Secret Service；service = `jms-client`，account = `<alias>/password` 与 `<alias>/otp_secret`
 - **环境变量回退**：`JMS_PASSWORD_<ALIAS>` / `JMS_OTP_<ALIAS>`（大写别名），供 headless Linux / CI / WSL；优先级高于凭据库
 - 两处都没有 → 明确报错并给出指引，**绝不静默降级为明文落盘**
+- **凭据库不可读 ≠ 凭据不存在**：两者调用方要做的事不同，错误必须分开。Linux Secret Service 的 collection 被锁定时，Unlock 会返回 prompt 路径并等待人工输入——headless 环境（SSH/CI/容器）无人应答，调用会永久阻塞。读凭据前先探测 collection 的 `Locked` 属性（普通属性读，不触发 prompt，立即返回），锁定即快速失败并指向环境变量；探测与实际读取竞速，两者都不引入正常路径的延迟
 - 文件可安全外泄/备份/进版本控制；权限仍收紧（Unix 0600 / Windows 当前用户 ACL），纵深防御；写入走原子替换
 - 威胁模型边界：防住文件外泄与跨机器拷贝；防不住同用户账户下运行的恶意进程（所有 OS 凭据库方案的共同边界），以及环境变量回退在进程环境中的暴露面（可能进崩溃转储）
 - MCP 客户端集成：MCP 条目 `{"command": "jms", "args": ["mcp"]}` 不含任何凭据，管理器可自由同步到所有 AI 客户端；凭据由 `jms config add` 一次性写入 OS 凭据库
