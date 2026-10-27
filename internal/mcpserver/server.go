@@ -444,6 +444,29 @@ func (s *Server) publish(e obs.Event) {
 	}
 }
 
+// failOp records a tool call that never reached the point of starting.
+//
+// A failure before the session exists — a missing credential, a locked
+// credential store, an unreachable server — used to leave no trace at
+// all: the audit stream showed nothing, so a caller that hit one had no
+// way to tell a broken configuration from a server that was down.
+//
+// The event carries the server and asset but never a credential: the
+// reason string is produced by the code that failed and contains no
+// secret.
+func (s *Server) failOp(server, asset, command string, err error) {
+	if err == nil {
+		return
+	}
+	s.publish(obs.Event{
+		Kind:    obs.KindError,
+		Server:  server,
+		Asset:   asset,
+		Command: command,
+		Reason:  err.Error(),
+	})
+}
+
 // startOp publishes the exec.start half of one tool call.
 func (s *Server) startOp(server, asset, backend, command string) time.Time {
 	started := time.Now()
@@ -942,6 +965,7 @@ func (s *Server) lsTool() (*mcp.Tool, mcp.ToolHandler) {
 
 		sess, srv, err := s.sessionFor(ctx, args.Server, args.ConfigPath)
 		if err != nil {
+			s.failOp(args.Server, "", "ls "+args.Keyword, err)
 			return errorResult(err), nil
 		}
 		if sess == nil || sess.Client == nil {
@@ -1012,6 +1036,7 @@ func (s *Server) resolveTool() (*mcp.Tool, mcp.ToolHandler) {
 
 		sess, srv, err := s.sessionFor(ctx, serverName, args.ConfigPath)
 		if err != nil {
+			s.failOp(serverName, assetName, "resolve", err)
 			return errorResult(err), nil
 		}
 		started := s.startOp(srv.Name, assetName, string(transport.BackendAuto), "resolve")
@@ -1082,6 +1107,7 @@ func (s *Server) execTool() (*mcp.Tool, mcp.ToolHandler) {
 
 		sess, srv, err := s.sessionFor(ctx, serverName, args.ConfigPath)
 		if err != nil {
+			s.failOp(serverName, assetName, args.Command, err)
 			return errorResult(err), nil
 		}
 
@@ -1217,6 +1243,7 @@ func (s *Server) uploadTool() (*mcp.Tool, mcp.ToolHandler) {
 
 		sess, srv, err := s.sessionFor(ctx, serverName, args.ConfigPath)
 		if err != nil {
+			s.failOp(serverName, assetName, "sftp upload "+args.Src, err)
 			return errorResult(err), nil
 		}
 		started := s.startOp(srv.Name, assetName, "sftp", "upload "+args.Src)
@@ -1271,6 +1298,7 @@ func (s *Server) downloadTool() (*mcp.Tool, mcp.ToolHandler) {
 
 		sess, srv, err := s.sessionFor(ctx, serverName, args.ConfigPath)
 		if err != nil {
+			s.failOp(serverName, assetName, "sftp download "+args.Src, err)
 			return errorResult(err), nil
 		}
 		started := s.startOp(srv.Name, assetName, "sftp", "download "+args.Src)
@@ -1325,10 +1353,12 @@ func (s *Server) relayTool() (*mcp.Tool, mcp.ToolHandler) {
 
 		srcSess, srcSrv, err := s.sessionFor(ctx, src.server, args.ConfigPath)
 		if err != nil {
+			s.failOp(src.server, src.asset, "sftp relay", err)
 			return errorResult(err), nil
 		}
 		dstSess, dstSrv, err := s.sessionFor(ctx, dst.server, args.ConfigPath)
 		if err != nil {
+			s.failOp(dst.server, dst.asset, "sftp relay", err)
 			return errorResult(err), nil
 		}
 		started := s.startOp(srcSrv.Name, src.asset, "sftp",
