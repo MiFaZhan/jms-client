@@ -651,9 +651,19 @@ func loadCredentials(deps Deps, alias string) (password, secret string, err erro
 			if envErr != nil {
 				envName = "<unknown kind>"
 			}
+			// %w keeps ErrNotFound in the chain, so a caller can still
+			// tell "the credential is absent" from "the store failed".
 			return "", "", fmt.Errorf(
-				"no stored password for server %q: run `jms config add %s` or set %s",
-				alias, alias, envName)
+				"no stored password for server %q: run `jms config add %s` or set %s: %w",
+				alias, alias, envName, config.ErrNotFound)
+		}
+		// A locked credential store is not "the password is missing": it
+		// means the store exists but cannot be read unattended, which is
+		// what happens on a headless machine whose keyring was never
+		// unlocked. The two need different actions, so they get different
+		// messages. The hint is already part of the store's error.
+		if errors.Is(err, config.ErrCredentialStoreLocked) {
+			return "", "", fmt.Errorf("cannot read the password for %q: %w", alias, err)
 		}
 		return "", "", fmt.Errorf("read the password for %q: %w", alias, err)
 	}

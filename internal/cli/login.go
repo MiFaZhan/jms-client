@@ -70,7 +70,15 @@ func runLogin(cmd *cobra.Command, deps Deps, target string, opts loginOptions) e
 			return err
 		}
 	}
+	// The credential read happens inside resolveCommandTarget, and it is
+	// the stage that can block on a locked keyring, so it is timed on
+	// the failure path as well as the success path.
+	credStarted := time.Now()
 	conn, err := resolveCommandTarget(cmd, deps, t)
+	if opts.timing {
+		fmt.Fprintf(deps.Err, "Timing credentials: %s\n",
+			time.Since(credStarted).Round(time.Millisecond))
+	}
 	if err != nil {
 		return err
 	}

@@ -123,6 +123,45 @@ func (c *chainStore) Delete(alias string) error {
 	return lastErr
 }
 
+// CredentialHint renders the operator-facing hint for a credential that
+// could not be read.
+//
+// It names the environment variable that bypasses the credential store,
+// because that is the way out on a machine with no graphical session, and
+// it never contains a credential value.
+func CredentialHint(alias string) string {
+	envName, err := EnvVarName(alias, CredPassword)
+	if err != nil {
+		envName = "JMS_PASSWORD_<ALIAS>"
+	}
+	return fmt.Sprintf("unlock the keyring, or set %s", envName)
+}
+
+// LockedError reports that the OS credential store is locked and cannot be
+// read unattended.
+//
+// It exists so the message can carry the operator-facing hint while
+// errors.Is still recognises ErrCredentialStoreLocked. Wrapping the
+// sentinel with %w would append "credential store is locked" to the
+// message, which says the same thing twice.
+type LockedError struct {
+	// Alias is the server alias whose credential could not be read.
+	Alias string
+	// Cause is the underlying failure, if any.
+	Cause error
+}
+
+// Error renders the message an operator sees.
+func (e *LockedError) Error() string {
+	return fmt.Sprintf("the credential store is locked — %s", CredentialHint(e.Alias))
+}
+
+// Unwrap exposes the sentinel so errors.Is(err, ErrCredentialStoreLocked)
+// holds.
+func (e *LockedError) Unwrap() error {
+	return ErrCredentialStoreLocked
+}
+
 // NewKeyringStore returns a CredentialStore backed by the OS credential
 // store (Windows Credential Manager / macOS Keychain / Linux Secret
 // Service).
@@ -150,10 +189,15 @@ func (k *keyringStore) Get(alias, kind string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	v, err := keyring.Get(keyringService, account)
+	v, err := readCredential(keyringService, account)
 	if err != nil {
-		if errors.Is(err, keyring.ErrNotFound) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, keyring.ErrNotFound) {
 			return "", fmt.Errorf("%w: %s", ErrNotFound, account)
+		}
+		if errors.Is(err, ErrCredentialStoreLocked) {
+			// The lock message is the one an operator can act on, so it
+			// carries the hint rather than the bare sentinel.
+			return "", &LockedError{Alias: alias, Cause: err}
 		}
 		return "", fmt.Errorf("credential store read failed: %w", err)
 	}

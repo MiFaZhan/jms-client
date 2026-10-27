@@ -803,9 +803,19 @@ func (s *Server) credentials(alias string) (auth.Credentials, error) {
 			if envErr != nil {
 				envName = "<unknown>"
 			}
+			// %w keeps ErrNotFound in the chain, so a caller can still
+			// tell "the credential is absent" from "the store failed".
 			return auth.Credentials{}, fmt.Errorf(
-				"no stored password for server %q: run `jms config add %s` or set %s",
-				alias, alias, envName)
+				"no stored password for server %q: run `jms config add %s` or set %s: %w",
+				alias, alias, envName, config.ErrNotFound)
+		}
+		// A locked credential store must not look like a mystery timeout
+		// to the agent on the other end of the MCP channel: say what is
+		// wrong and how to get out of it. The hint is already part of the
+		// store's error.
+		if errors.Is(err, config.ErrCredentialStoreLocked) {
+			return auth.Credentials{}, fmt.Errorf(
+				"cannot read the password for server %q: %w", alias, err)
 		}
 		return auth.Credentials{}, fmt.Errorf("read the stored password for server %q: %w", alias, err)
 	}

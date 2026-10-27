@@ -194,6 +194,16 @@ const rootLong = `jms — JumpServer v4 bastion access.
 Credentials are never written to the configuration file: they live in the
 OS credential store (or in JMS_PASSWORD_<ALIAS> / JMS_OTP_<ALIAS>).
 
+Environment-variable credentials:
+    JMS_PASSWORD_<ALIAS>   the password for the server alias
+    JMS_OTP_<ALIAS>        the TOTP secret for the server alias
+
+The alias is uppercased and every '-' becomes '_', so the server alias
+"bastion" is read from JMS_PASSWORD_BASTION. Environment variables take
+precedence over the OS credential store, which makes them the way to run
+on a headless machine (SSH, CI, a container) where the keyring cannot be
+unlocked: set the variable and jms never touches the credential store.
+
 Target syntax:
     <asset>@<server>    asset on a named server
     <asset>             asset on the default server`
