@@ -81,6 +81,28 @@ func TestConfigListWarnsAboutLockedCredentialStore(t *testing.T) {
 	}
 }
 
+// TestConfigListDistinguishesALockedStoreFromAMissingOne checks the
+// listing tells the two apart.
+//
+// A locked store holds the password but cannot be read; saying "no stored
+// password" would send the operator to re-enter a password that is
+// already there.
+func TestConfigListDistinguishesALockedStoreFromAMissingOne(t *testing.T) {
+	env := newCLIEnv(t)
+	env.creds = lockedStore{}
+	env.seedServer("bastion", "http://internal.example:2280/", "", "testuser")
+
+	env.run("config", "list")
+
+	out := env.stdout() + env.stderr()
+	if !strings.Contains(out, "locked") {
+		t.Fatalf("output = %q, want it to say the store is locked", out)
+	}
+	if strings.Contains(out, "no stored password") {
+		t.Fatalf("output = %q, want it not to claim the password is missing", out)
+	}
+}
+
 // TestLoadCredentialsDistinguishesLockedFromMissing pins the difference
 // between the two failure modes: a missing credential and a locked store
 // call for different actions, so they must not share a message.

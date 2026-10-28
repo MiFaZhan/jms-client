@@ -255,7 +255,8 @@ func runConfigList(cmd *cobra.Command, deps Deps) error {
 			marker = "*"
 		}
 		source := credentialSource(deps, name)
-		if source == credsMissing {
+		switch source {
+		case credsMissing:
 			envName, envErr := config.EnvVarName(name, config.CredPassword)
 			if envErr != nil {
 				envName = "<unknown kind>"
@@ -263,6 +264,17 @@ func runConfigList(cmd *cobra.Command, deps Deps) error {
 			fmt.Fprintf(deps.Err,
 				"Warning: no stored password for server %q — run `jms config add %s` or set %s\n",
 				name, name, envName)
+		case credsLocked:
+			// The password is stored; the store is just not readable
+			// right now. Saying "no stored password" here would send
+			// the operator to re-enter a password that is already there.
+			envName, envErr := config.EnvVarName(name, config.CredPassword)
+			if envErr != nil {
+				envName = "JMS_PASSWORD_<ALIAS>"
+			}
+			fmt.Fprintf(deps.Err,
+				"Warning: the credential store is locked — unlock it, or set %s, to use server %q\n",
+				envName, name)
 		}
 		table.addRow(name, orDash(srv.Internal), orDash(srv.External), srv.Username, source, marker)
 	}
@@ -617,6 +629,11 @@ const (
 	credsEnv     = "env"
 	credsKeyring = "keyring"
 	credsMissing = "missing"
+	// credsLocked means the credential store holds the entry but cannot
+	// be read unattended. It is reported apart from "missing" because
+	// the two call for different actions: a missing entry needs
+	// `jms config add`, a locked one needs the keyring unlocked.
+	credsLocked = "locked"
 )
 
 // credentialSource reports where the password for alias would come from.
@@ -632,8 +649,12 @@ func credentialSource(deps Deps, alias string) string {
 		}
 	}
 	if deps.Creds != nil {
-		if _, err := deps.Creds.Get(alias, config.CredPassword); err == nil {
+		_, err := deps.Creds.Get(alias, config.CredPassword)
+		switch {
+		case err == nil:
 			return credsKeyring
+		case errors.Is(err, config.ErrCredentialStoreLocked):
+			return credsLocked
 		}
 	}
 	return credsMissing
