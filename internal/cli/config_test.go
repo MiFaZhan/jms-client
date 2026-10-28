@@ -573,6 +573,40 @@ func TestConfigTestDistinguishesAuthFailureFromUnreachable(t *testing.T) {
 	})
 }
 
+func TestConfigTestDoesNotCallAReachableAddressUnreachable(t *testing.T) {
+	env := newCLIEnv(t)
+	env.seedServer("bastion", "http://internal.example:2280/", "http://external.example:2280/", "testuser")
+	// No credential is stored: the address is reachable, but the command
+	// cannot log in. The failure must name the credential, not the
+	// network - a reachable address called "unreachable" sends the
+	// operator after the wrong thing.
+	env.probeFn = func(_ context.Context, url string, _ time.Duration) bool {
+		env.probed = append(env.probed, url)
+		return true
+	}
+
+	code := env.run("config", "test")
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero when no credential is stored")
+	}
+	stderr := env.stderr()
+	if !strings.Contains(stderr, "no stored password") {
+		t.Fatalf("stderr = %q, want it to name the missing credential", stderr)
+	}
+	if strings.Contains(stderr, "unreachable") {
+		t.Fatalf("stderr = %q, want no unreachable claim for a reachable address", stderr)
+	}
+	if !strings.Contains(stderr, "reachable, no credential") {
+		t.Errorf("stderr = %q, want the address reported as reachable without a credential", stderr)
+	}
+	for _, kind := range []string{"internal", "external"} {
+		row := rowByFirstField(t, env.stdout(), kind)
+		if !strings.Contains(row, "yes") {
+			t.Errorf("%s row = %q, want it reported reachable", kind, row)
+		}
+	}
+}
+
 func TestConfigTestUnknownAliasFails(t *testing.T) {
 	env := newCLIEnv(t)
 	env.seedServer("bastion", "http://internal.example:2280/", "", "testuser")

@@ -431,6 +431,11 @@ func runConfigTest(cmd *cobra.Command, deps Deps, alias string) error {
 				probes[i].login = "no credential"
 			}
 		}
+		// The reachability report is the part that still holds: the
+		// addresses answered, so the operator must be able to see that
+		// the network is fine and the credential is what is missing.
+		printTestTable(deps.Out, srv, cfg.Default == srv.Name, probes)
+		fmt.Fprintf(deps.Out, "\nCredentials: %s\n", credentialSource(deps, srv.Name))
 		return fmt.Errorf("%w: %v", credErr, describeProbes(probes))
 	}
 	// Every reachable endpoint gets a login attempt, not just the first: the
@@ -501,10 +506,23 @@ func describeLoginFailure(srv *config.ServerConfig, baseURL string, err error) e
 }
 
 // describeProbes summarises the probe results for an error message.
+//
+// Each address is described by what was actually observed. An address
+// that answered the probe is never called "unreachable", even when the
+// login never ran because the credential could not be read: the
+// credential is then the real cause, and a false "unreachable" sends
+// the reader after the network instead of after the keyring.
 func describeProbes(probes []endpointProbe) string {
 	parts := make([]string, 0, len(probes))
 	for _, p := range probes {
-		parts = append(parts, fmt.Sprintf("%s %s: unreachable", p.kind, p.url))
+		state := "unreachable"
+		if p.reachable {
+			state = "reachable"
+			if p.login != "" {
+				state = "reachable, " + p.login
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%s %s: %s", p.kind, p.url, state))
 	}
 	return strings.Join(parts, "; ")
 }
