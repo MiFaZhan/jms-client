@@ -239,6 +239,40 @@ func keyringGet(service, account string) (string, error) {
 // go-keyring".
 var credentialReader func(service, account string) (string, error)
 
+// keyringSet stores one credential through go-keyring.
+//
+// It is a thin wrapper so the Linux credential path can reach the same
+// implementation the other platforms use, and so tests can stub it.
+func keyringSet(service, account, value string) error {
+	if credentialWriter != nil {
+		return credentialWriter(service, account, value)
+	}
+	return keyring.Set(service, account, value)
+}
+
+// keyringDelete removes one credential through go-keyring.
+//
+// It is a thin wrapper so the Linux credential path can reach the same
+// implementation the other platforms use, and so tests can stub it.
+func keyringDelete(service, account string) error {
+	if credentialDeleter != nil {
+		return credentialDeleter(service, account)
+	}
+	return keyring.Delete(service, account)
+}
+
+// credentialWriter is the function the Linux credential write goes through.
+//
+// It is a variable so a test can substitute a fake. A nil value means
+// "use go-keyring".
+var credentialWriter func(service, account, value string) error
+
+// credentialDeleter is the function the Linux credential delete goes through.
+//
+// It is a variable so a test can substitute a fake. A nil value means
+// "use go-keyring".
+var credentialDeleter func(service, account string) error
+
 // hasGraphicalSession reports whether a human could answer an unlock
 // prompt.
 //

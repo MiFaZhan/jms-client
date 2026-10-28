@@ -62,3 +62,45 @@ func readCredential(service, account string) (string, error) {
 			ErrCredentialStoreLocked, account, keyringCallTimeout)
 	}
 }
+
+// writeCredential stores one credential in the OS credential store.
+//
+// The Windows and macOS credential APIs return promptly, so the write
+// goes straight to go-keyring, bounded so a wedged OS service cannot hang
+// the command forever.
+func writeCredential(service, account, value string) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- keyring.Set(service, account, value)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), keyringCallTimeout)
+	defer cancel()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("%w: storing %s in the credential store timed out after %s",
+			ErrCredentialStoreLocked, account, keyringCallTimeout)
+	}
+}
+
+// deleteCredential removes one credential from the OS credential store.
+func deleteCredential(service, account string) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- keyring.Delete(service, account)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), keyringCallTimeout)
+	defer cancel()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("%w: deleting %s from the credential store timed out after %s",
+			ErrCredentialStoreLocked, account, keyringCallTimeout)
+	}
+}

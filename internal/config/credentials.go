@@ -149,11 +149,19 @@ type LockedError struct {
 	Alias string
 	// Cause is the underlying failure, if any.
 	Cause error
+	// Hint overrides the operator-facing advice. The default names the
+	// environment variable, which is the way out when reading - but the
+	// environment store is read-only, so a write needs different advice.
+	Hint string
 }
 
 // Error renders the message an operator sees.
 func (e *LockedError) Error() string {
-	return fmt.Sprintf("the credential store is locked — %s", CredentialHint(e.Alias))
+	hint := e.Hint
+	if hint == "" {
+		hint = CredentialHint(e.Alias)
+	}
+	return fmt.Sprintf("the credential store is locked — %s", hint)
 }
 
 // Unwrap exposes the sentinel so errors.Is(err, ErrCredentialStoreLocked)
@@ -209,7 +217,13 @@ func (k *keyringStore) Set(alias, kind, value string) error {
 	if err != nil {
 		return err
 	}
-	if err := keyring.Set(keyringService, account, value); err != nil {
+	if err := writeCredential(keyringService, account, value); err != nil {
+		if errors.Is(err, ErrCredentialStoreLocked) {
+			// The lock message is the one an operator can act on, so it
+			// carries the hint rather than the bare sentinel.
+			return &LockedError{Alias: alias, Cause: err,
+				Hint: "unlock the keyring before storing credentials"}
+		}
 		return fmt.Errorf("credential store write failed: %w", err)
 	}
 	return nil
@@ -225,12 +239,17 @@ func (k *keyringStore) Delete(alias string) error {
 		if err != nil {
 			continue
 		}
-		err = keyring.Delete(keyringService, account)
+		err = deleteCredential(keyringService, account)
 		if err == nil || errors.Is(err, keyring.ErrNotFound) {
 			continue
 		}
 		if firstErr == nil {
-			firstErr = fmt.Errorf("credential store delete failed: %w", err)
+			if errors.Is(err, ErrCredentialStoreLocked) {
+				firstErr = &LockedError{Alias: alias, Cause: err,
+					Hint: "unlock the keyring before removing credentials"}
+			} else {
+				firstErr = fmt.Errorf("credential store delete failed: %w", err)
+			}
 		}
 	}
 	return firstErr

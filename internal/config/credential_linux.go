@@ -109,3 +109,83 @@ func awaitRead(ctx context.Context, done <-chan credentialReadResult, service, a
 // variable so a test can substitute a fake. A nil value means "use
 // probeSecretServiceLock".
 var credentialStoreStateProbe func(ctx context.Context) error
+
+// writeCredential stores one credential in the Linux Secret Service.
+//
+// The write path has the same trap as the read path, and the same
+// consequence. go-keyring's Set opens the collection with Unlock before
+// creating the item, and Unlock blocks on a prompt that nobody can
+// answer on a headless machine: the command would hang with no output
+// and no audit record, exactly like `jms exec` used to.
+//
+// So the lock state is probed first. A locked store is reported at once,
+// with the way out, instead of hanging. The write itself then runs
+// bounded, because the underlying D-Bus call cannot be interrupted: a
+// store that wedges for another reason must not hang the command
+// either.
+func writeCredential(service, account, value string) error {
+	if err := probeCredentialStore(); err != nil {
+		return fmt.Errorf("%w: the credential for %q cannot be stored%s",
+			ErrCredentialStoreLocked, account, writeLockHint())
+	}
+	return runBoundedCredentialOp("storing "+account, func() error {
+		return keyringSet(service, account, value)
+	})
+}
+
+// deleteCredential removes one credential from the Linux Secret Service.
+//
+// go-keyring's Delete also opens the collection with Unlock, so the same
+// lock probe and the same bound apply. A locked store means the entry is
+// still there, and the error says so rather than pretending it is gone.
+func deleteCredential(service, account string) error {
+	if err := probeCredentialStore(); err != nil {
+		return fmt.Errorf("%w: the credential for %q cannot be removed%s",
+			ErrCredentialStoreLocked, account, writeLockHint())
+	}
+	return runBoundedCredentialOp("deleting "+account, func() error {
+		return keyringDelete(service, account)
+	})
+}
+
+// probeCredentialStore reports the lock state of the OS credential store.
+func probeCredentialStore() error {
+	probe := credentialStoreStateProbe
+	if probe == nil {
+		probe = probeSecretServiceLock
+	}
+	return probe(context.Background())
+}
+
+// runBoundedCredentialOp runs one credential-store operation with a bound.
+//
+// The operation cannot be cancelled, so on timeout it is abandoned and
+// the goroutine ends with the process.
+func runBoundedCredentialOp(what string, op func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- op() }()
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), keyringCallTimeout)
+	defer cancel()
+
+	select {
+	case err := <-done:
+		return err
+	case <-waitCtx.Done():
+		return fmt.Errorf("%w: %s in the credential store timed out after %s",
+			ErrCredentialStoreLocked, what, keyringCallTimeout)
+	}
+}
+
+// writeLockHint explains what to do about a locked credential store on the
+// write path.
+//
+// The environment variable that bypasses the store on the read path
+// cannot help here: it is read-only, so it cannot receive a stored
+// credential. Unlocking the keyring is the only route.
+func writeLockHint() string {
+	if hasGraphicalSession() {
+		return " (unlock the keyring from the desktop session first)"
+	}
+	return " (unlock the keyring before storing credentials)"
+}

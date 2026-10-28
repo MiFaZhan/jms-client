@@ -16,9 +16,13 @@ func restoreLinuxCredentialHooks(t *testing.T) {
 	t.Helper()
 	oldReader := credentialReader
 	oldProbe := credentialStoreStateProbe
+	oldWriter := credentialWriter
+	oldDeleter := credentialDeleter
 	t.Cleanup(func() {
 		credentialReader = oldReader
 		credentialStoreStateProbe = oldProbe
+		credentialWriter = oldWriter
+		credentialDeleter = oldDeleter
 	})
 }
 
@@ -89,6 +93,94 @@ func TestReadCredentialPropagatesReadError(t *testing.T) {
 
 	if _, err := readCredential("jms-client", "bastion/password"); err == nil {
 		t.Fatal("readCredential() = nil error, want the read failure")
+	}
+}
+
+// TestWriteCredentialFailsFastWhenStoreIsLocked is the regression test
+// for the write path of the same defect: go-keyring's Set opens the
+// collection with Unlock, and on a headless machine that blocks on a
+// prompt nobody can answer. `jms config add` would hang with no output
+// and no audit record - the read path's bug, on the write side.
+//
+// The lock state is detected by a probe, so the write must fail promptly
+// and must not have been attempted at all.
+func TestWriteCredentialFailsFastWhenStoreIsLocked(t *testing.T) {
+	restoreLinuxCredentialHooks(t)
+
+	credentialStoreStateProbe = func(ctx context.Context) error {
+		return errors.New("locked: the collection is locked")
+	}
+	// The write blocks for a long time, exactly like the real one does
+	// on a locked keyring. If the implementation waited for it, this test
+	// would fail on the elapsed-time check rather than hang forever.
+	credentialWriter = func(service, account, value string) error {
+		time.Sleep(30 * time.Second)
+		return errors.New("the write should not have been waited for")
+	}
+
+	start := time.Now()
+	err := writeCredential("jms-client", "bastion/password", "s3cret")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("writeCredential() = nil error, want a locked-store failure")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("writeCredential() took %s, want a prompt failure", elapsed)
+	}
+	if !errors.Is(err, ErrCredentialStoreLocked) {
+		t.Fatalf("writeCredential() error = %v, want ErrCredentialStoreLocked", err)
+	}
+	if !strings.Contains(err.Error(), "unlock") {
+		t.Fatalf("writeCredential() error = %q, want it to say how to get out", err)
+	}
+}
+
+// TestDeleteCredentialFailsFastWhenStoreIsLocked covers the third path
+// that opens the collection with Unlock: go-keyring's Delete.
+func TestDeleteCredentialFailsFastWhenStoreIsLocked(t *testing.T) {
+	restoreLinuxCredentialHooks(t)
+
+	credentialStoreStateProbe = func(ctx context.Context) error {
+		return errors.New("locked: the collection is locked")
+	}
+	credentialDeleter = func(service, account string) error {
+		time.Sleep(30 * time.Second)
+		return errors.New("the delete should not have been waited for")
+	}
+
+	start := time.Now()
+	err := deleteCredential("jms-client", "bastion/password")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("deleteCredential() = nil error, want a locked-store failure")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("deleteCredential() took %s, want a prompt failure", elapsed)
+	}
+	if !errors.Is(err, ErrCredentialStoreLocked) {
+		t.Fatalf("deleteCredential() error = %v, want ErrCredentialStoreLocked", err)
+	}
+}
+
+// TestWriteCredentialStoresWhenStoreIsReadable checks the normal path
+// still works: an unlocked store must not change the outcome.
+func TestWriteCredentialStoresWhenStoreIsReadable(t *testing.T) {
+	restoreLinuxCredentialHooks(t)
+
+	credentialStoreStateProbe = func(ctx context.Context) error { return nil }
+	var stored string
+	credentialWriter = func(service, account, value string) error {
+		stored = value
+		return nil
+	}
+
+	if err := writeCredential("jms-client", "bastion/password", "s3cret"); err != nil {
+		t.Fatalf("writeCredential() = %v, want nil", err)
+	}
+	if stored != "s3cret" {
+		t.Fatalf("stored = %q, want %q", stored, "s3cret")
 	}
 }
 
