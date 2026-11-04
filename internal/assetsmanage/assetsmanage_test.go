@@ -93,6 +93,15 @@ func TestCreatePostsToHostsEndpointWithFullPayload(t *testing.T) {
 	if acc["username"] != "yunze" {
 		t.Errorf("account username = %v", acc["username"])
 	}
+	// The secret field is "secret". Naming it "password" is silently
+	// ignored by the server and yields an account that cannot
+	// authenticate, which surfaces as a misleading "认证失败".
+	if acc["secret"] != "secret" {
+		t.Errorf("account secret = %v, want the password under \"secret\"", acc["secret"])
+	}
+	if _, wrong := acc["password"]; wrong {
+		t.Error("account must not carry a \"password\" field; the server ignores it")
+	}
 	if acc["secret_type"] != "password" {
 		t.Errorf("account secret_type = %v, want password", acc["secret_type"])
 	}

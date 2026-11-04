@@ -139,11 +139,19 @@ type createPayload struct {
 	Protocols []protocolRow `json:"protocols"`
 }
 
+// accountBody is one account in a create request.
+//
+// The secret travels in "secret", not "password": JumpServer's
+// BaseAccountSerializer declares `secret = EncryptedField(...)` alongside
+// `secret_type`, and an unknown field is ignored rather than rejected —
+// so naming it "password" produces an account with no secret at all,
+// which authenticates on every attempt and fails every time. The asset
+// then reports "认证失败" for a reason that looks like a wrong password.
 type accountBody struct {
-	Name     string `json:"name"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Secret   string `json:"secret_type"`
+	Name       string `json:"name"`
+	Username   string `json:"username"`
+	Secret     string `json:"secret"`
+	SecretType string `json:"secret_type"`
 }
 
 type protocolRow struct {
@@ -244,10 +252,10 @@ func Create(ctx context.Context, c *api.Client, spec Spec) (Asset, error) {
 	accounts := make([]accountBody, 0, len(spec.Accounts))
 	for _, a := range spec.Accounts {
 		accounts = append(accounts, accountBody{
-			Name:     a.Name,
-			Username: a.Username,
-			Password: a.Password,
-			Secret:   "password",
+			Name:       a.Name,
+			Username:   a.Username,
+			Secret:     a.Password,
+			SecretType: "password",
 		})
 	}
 
