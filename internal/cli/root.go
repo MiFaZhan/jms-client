@@ -172,6 +172,7 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newVersionCommand())
 	root.AddCommand(newConfigCommand(&deps))
 	root.AddCommand(newLSCommand(&deps))
+	root.AddCommand(newAssetCommand(&deps))
 	root.AddCommand(newExecCommand(&deps))
 	root.AddCommand(newLoginCommand(&deps))
 	root.AddCommand(newSFTPCommand(&deps))

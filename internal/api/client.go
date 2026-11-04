@@ -236,6 +236,40 @@ func (c *Client) Post(ctx context.Context, path string, body, out any) error {
 	return c.do(ctx, http.MethodPost, path, nil, body, out)
 }
 
+// Put performs an authenticated PUT with a JSON body and decodes the
+// JSON response into out. out may be nil.
+//
+// JumpServer uses PUT for a full update of an existing object (asset
+// field changes, account edits); PATCH is not exposed by the asset views.
+func (c *Client) Put(ctx context.Context, path string, body, out any) error {
+	return c.do(ctx, http.MethodPut, path, nil, body, out)
+}
+
+// Patch performs an authenticated PATCH with a JSON body and decodes the
+// JSON response into out. out may be nil.
+//
+// PATCH changes only the fields the body carries, which is what the
+// asset view advertises alongside PUT (Allow: GET, POST, PUT, PATCH,
+// DELETE, HEAD, OPTIONS).
+func (c *Client) Patch(ctx context.Context, path string, body, out any) error {
+	return c.do(ctx, http.MethodPatch, path, nil, body, out)
+}
+
+// Delete performs an authenticated DELETE and decodes the JSON response
+// into out. out may be nil.
+//
+// Delete carries no body: the api.do signature always marshals a body
+// argument, and an empty JSON object would be rejected by views that
+// expect no payload, so the body is left nil here.
+//
+// JumpServer's asset detail view answers DELETE on the resource itself
+// (e.g. /api/v1/assets/hosts/<id>/); it rejects POST with
+// "method_not_allowed", so a delete cannot be expressed as a POST with
+// an ?action=delete query — that form is only valid on the list view.
+func (c *Client) Delete(ctx context.Context, path string, out any) error {
+	return c.do(ctx, http.MethodDelete, path, nil, nil, out)
+}
+
 // GetAll walks every page of a limit/offset paginated list endpoint and
 // returns the raw items.
 //

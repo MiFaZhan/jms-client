@@ -42,7 +42,8 @@ Reaching a bastion usually means a browser tab, or a `~/.ssh/config` you maintai
 | **Dual-address failover** | Internal/external addresses probed and selected automatically, with a remembered last-good address for fast cold starts. |
 | **Connection pooling** | Login sessions and terminals are reused per `server/asset/account/protocol`. Idle connections are reaped; broken ones are rebuilt. |
 | **Credentials in the OS store** | Windows Credential Manager, macOS Keychain, Linux Secret Service. Environment-variable fallback for containers and CI. |
-| **MCP server** | Seven tools over stdio for AI clients, sharing one pooled process. |
+| **Asset management** | Create, update, delete and list assets, and grant or revoke access — all from the CLI or MCP, without leaving the terminal for the web console. |
+| **MCP server** | Fifteen tools over stdio for AI clients, sharing one pooled process. |
 | **Local audit stream** | Structured JSONL per process; `jms tail` to follow it, `jms attach` to watch and join. |
 | **Two terminal backends** | WebSocket (default, same path as the web console) and SSH, with automatic selection. |
 
@@ -195,6 +196,14 @@ Because the MCP process has no command-line flags (your client launches one long
 | `jms_sftp_download` | Download a file from an asset | `asset`, `src`, `dst` |
 | `jms_sftp_relay` | Stream a file directly between two assets | `src_spec`, `dst_spec` |
 | `jms_config_list` | List configured servers and their credential source | — |
+| `jms_asset_list` | List every asset on the server (admin view) | — |
+| `jms_asset_show` | Show one asset in detail | `target` |
+| `jms_asset_create` | Create a host asset | `name`, `address` |
+| `jms_asset_update` | Rename, re-address or re-comment an asset | `target` |
+| `jms_asset_delete` | Delete an asset | `target` |
+| `jms_asset_grant` | Grant users access to an asset | `target` |
+| `jms_asset_permissions` | List permissions, optionally for one asset | — |
+| `jms_asset_revoke` | Revoke a permission | `target` |
 
 An eighth tool, `jms_pool_status`, is registered when `JMS_MCP_DEBUG=1` and reports the shape of the connection pool. It is for diagnosing the server, not for daily use.
 
@@ -219,6 +228,34 @@ Two behaviours worth knowing when you write prompts for an agent:
 | `jms attach` | Watch a running host, optionally joining its session. |
 | `jms log show` | Query the audit log. |
 | `jms mcp` | Run the stdio MCP server. |
+| `jms asset list \| show \| create \| update \| delete` | Manage assets on the bastion. |
+| `jms asset grant \| permissions \| revoke` | Manage who may reach an asset. |
+
+### Provisioning assets
+
+JumpServer separates "an asset exists" from "a user may reach it": creating
+an asset records it, but only an `AssetPermission` exposes it to a user.
+That is why a new asset appears in `jms asset list` (the admin view) and
+not in `jms ls` (the per-user view) until it has been granted.
+
+`--grant-me` on create does both steps in one command:
+
+```bash
+jms asset create "host-preview-01" 192.168.100.252 \
+    --account yunze --username yunze --password '…' --grant-me
+```
+
+Grants can also be managed separately:
+
+```bash
+jms asset grant "host-preview-01" --self      # or --account @ALL --protocol all
+jms asset permissions "host-preview-01"       # what grants this asset
+jms asset revoke "grant-host-preview-01" --yes
+```
+
+Deleting an asset does not delete the permissions that referenced it; the
+two are separate objects, so `jms asset revoke` is the command that ends
+access.
 
 Target syntax is `<asset>@<server>`; omitting `@<server>` uses the default server.
 

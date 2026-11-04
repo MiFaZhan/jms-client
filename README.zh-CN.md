@@ -195,6 +195,14 @@ jms mcp --print-config
 | `jms_sftp_download` | 从资产下载文件 | `asset`、`src`、`dst` |
 | `jms_sftp_relay` | 在两个资产之间直接流式中转文件 | `src_spec`、`dst_spec` |
 | `jms_config_list` | 列出已配置服务器及其凭据来源 | — |
+| `jms_asset_list` | 列出服务器上全部资产（管理员视角） | — |
+| `jms_asset_show` | 查看单个资产详情 | `target` |
+| `jms_asset_create` | 创建主机资产 | `name`、`address` |
+| `jms_asset_update` | 改名 / 改地址 / 改备注 | `target` |
+| `jms_asset_delete` | 删除资产 | `target` |
+| `jms_asset_grant` | 给用户授权某资产 | `target` |
+| `jms_asset_permissions` | 列出授权，可按资产过滤 | — |
+| `jms_asset_revoke` | 撤销授权 | `target` |
 
 设 `JMS_MCP_DEBUG=1` 时会额外注册第 8 个工具 `jms_pool_status`，用于报告连接池的当前形态 —— 这是排查服务端问题的工具，不是日常用法。
 
@@ -219,6 +227,32 @@ jms mcp --print-config
 | `jms attach` | 观察运行中的宿主，可选择接入其会话。 |
 | `jms log show` | 查询审计日志。 |
 | `jms mcp` | 运行 stdio MCP 服务。 |
+| `jms asset list \| show \| create \| update \| delete` | 管理堡垒机资产。 |
+| `jms asset grant \| permissions \| revoke` | 管理谁能访问某资产。 |
+
+### 开通资产
+
+JumpServer 把「资产存在」和「用户可访问」分成两件事：创建资产只是登记，
+真正让用户看到它的是 `AssetPermission` 授权记录。所以新建的资产会出现在
+`jms asset list`（管理员视角），但在授权前**不会**出现在 `jms ls`（按用户视角）。
+
+`--grant-me` 把两步合成一条命令：
+
+```bash
+jms asset create "主机-云则预演01" 192.168.100.252 \
+    --account yunze --username yunze --password '…' --grant-me
+```
+
+授权也可以单独管理：
+
+```bash
+jms asset grant "主机-云则预演01" --self      # 或 --account @ALL --protocol all
+jms asset permissions "主机-云则预演01"       # 哪些授权覆盖了该资产
+jms asset revoke "grant-主机-云则预演01" --yes
+```
+
+删除资产**不会**连带删除引用它的授权记录——两者是独立对象，
+要断掉访问得用 `jms asset revoke`。
 
 目标语法是 `<asset>@<server>`；省略 `@<server>` 则用默认服务器。
 

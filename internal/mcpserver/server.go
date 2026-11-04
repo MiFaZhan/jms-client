@@ -381,6 +381,14 @@ func (s *Server) build() *mcp.Server {
 	register(srv, s.downloadTool)
 	register(srv, s.relayTool)
 	register(srv, s.configListTool)
+	register(srv, s.assetListTool)
+	register(srv, s.assetShowTool)
+	register(srv, s.assetCreateTool)
+	register(srv, s.assetUpdateTool)
+	register(srv, s.assetDeleteTool)
+	register(srv, s.assetGrantTool)
+	register(srv, s.assetPermissionsTool)
+	register(srv, s.assetRevokeTool)
 	if s.opts.Debug {
 		register(srv, s.poolStatusTool)
 	}
