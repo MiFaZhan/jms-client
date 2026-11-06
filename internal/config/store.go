@@ -17,9 +17,13 @@ import (
 // It exists so that field names and rendering order are explicit and
 // stable, and so the in-memory AppConfig stays free of encoding tags.
 type tomlDoc struct {
-	Version       float64              `toml:"version"`
-	DefaultServer string               `toml:"default_server"`
-	Proxy         string               `toml:"proxy,omitempty"`
+	Version       float64 `toml:"version"`
+	DefaultServer string  `toml:"default_server"`
+	Proxy         string  `toml:"proxy,omitempty"`
+	// AuditKeepDays is how long the local audit files are kept. Absent (or 0)
+	// means "never prune": removing audit records is not something the tool
+	// starts doing because nobody configured it.
+	AuditKeepDays *int                 `toml:"audit_keep_days,omitempty"`
 	Servers       map[string]tomlEntry `toml:"servers"`
 }
 
@@ -39,6 +43,18 @@ type tomlEntry struct {
 // of tables. It is stripped so the rendered file matches DESIGN.md「配置文件」,
 // which shows [servers.<alias>] tables directly under the root keys.
 const serversParentHeader = "[servers]\n"
+
+// MaxAuditKeepDays bounds the retention window (ten years).
+const MaxAuditKeepDays = 3650
+
+// optionalKeepDays renders audit_keep_days so an unset value leaves no line
+// in the file.
+func optionalKeepDays(days int) *int {
+	if days <= 0 {
+		return nil
+	}
+	return &days
+}
 
 // optionalPort renders ssh_port so that an unset port is omitted: the
 // zero value keeps meaningless `ssh_port = 0` lines out of the file.
@@ -87,8 +103,14 @@ func marshalConfig(cfg *AppConfig) ([]byte, error) {
 	if err := enc.Encode(struct {
 		DefaultServer string               `toml:"default_server"`
 		Proxy         string               `toml:"proxy,omitempty"`
+		AuditKeepDays *int                 `toml:"audit_keep_days,omitempty"`
 		Servers       map[string]tomlEntry `toml:"servers"`
-	}{DefaultServer: cfg.Default, Proxy: strings.TrimSpace(cfg.Proxy), Servers: servers}); err != nil {
+	}{
+		DefaultServer: cfg.Default,
+		Proxy:         strings.TrimSpace(cfg.Proxy),
+		AuditKeepDays: optionalKeepDays(cfg.AuditKeepDays),
+		Servers:       servers,
+	}); err != nil {
 		return nil, fmt.Errorf("encode config: %w", err)
 	}
 
@@ -114,6 +136,13 @@ func parseConfig(path string, data []byte) (*AppConfig, error) {
 		Default: strings.TrimSpace(doc.DefaultServer),
 		Proxy:   strings.TrimSpace(doc.Proxy),
 		Servers: make(map[string]*ServerConfig, len(doc.Servers)),
+	}
+	if doc.AuditKeepDays != nil {
+		if *doc.AuditKeepDays < 0 || *doc.AuditKeepDays > MaxAuditKeepDays {
+			return nil, fmt.Errorf("invalid config %s: audit_keep_days must be between 0 and %d, got %d",
+				path, MaxAuditKeepDays, *doc.AuditKeepDays)
+		}
+		cfg.AuditKeepDays = *doc.AuditKeepDays
 	}
 	if cfg.Version == 0 {
 		cfg.Version = ConfigVersion

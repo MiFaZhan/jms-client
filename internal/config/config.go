@@ -262,8 +262,14 @@ type AppConfig struct {
 	// Proxy is the global proxy policy: empty (or "direct") means every
 	// connection is made directly, which is the default and never consults
 	// HTTP_PROXY/HTTPS_PROXY (DESIGN.md「代理策略」).
-	Proxy   string
-	Servers map[string]*ServerConfig
+	Proxy string
+	// AuditKeepDays is the local audit retention window in days.
+	//
+	// 0 means "never prune". The value is a property of this machine rather
+	// than of a server, so it lives at the top level: one retention rule per
+	// audit directory, whatever alias produced the records.
+	AuditKeepDays int
+	Servers       map[string]*ServerConfig
 }
 
 // ProxyFor returns the effective proxy value for a server: the server's

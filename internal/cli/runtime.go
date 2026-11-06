@@ -46,6 +46,9 @@ type Runtime struct {
 	// AuditDir is where the per-pid JSONL files live; `tail` and `log show`
 	// read it, `exec` and `mcp` write through the Bus.
 	AuditDir string
+	// AuditKeepDays is the local audit retention window: 0 disables pruning.
+	// It comes from JMS_AUDIT_KEEP_DAYS, else from the configuration file.
+	AuditKeepDays int
 
 	// Actor names this process in the audit stream ("cli", "mcp", or the
 	// JMS_ACTOR override), so a reader can tell which surface ran what.
@@ -147,6 +150,19 @@ func (d Deps) withRuntimeDefaults() Deps {
 	if rt.Actor == "" {
 		rt.Actor = defaultActor()
 	}
+	if rt.AuditKeepDays == 0 {
+		rt.AuditKeepDays = auditKeepDays(d)
+	}
+	// Pruning runs here, once per process at most (the sink stamps the last
+	// run), so both `jms exec` and a long-lived `jms mcp` host enforce the
+	// retention window without a second mechanism on the machine.
+	if rt.AuditKeepDays > 0 {
+		if res, ran, err := obs.PruneIfDue(rt.AuditDir, rt.AuditKeepDays, d.Now(), false); err != nil {
+			fmt.Fprintf(d.Err, "jms: audit prune skipped: %v\n", err)
+		} else if ran && res.Deleted > 0 {
+			fmt.Fprintf(d.Err, "jms: audit prune: %s\n", res)
+		}
+	}
 	if rt.ReaperInterval == 0 {
 		rt.ReaperInterval = connpool.ReapInterval
 	}
@@ -186,6 +202,30 @@ func (d Deps) withRuntimeDefaults() Deps {
 		rt.Bridge = xfer.RunBridge
 	}
 	return d
+}
+
+// auditKeepDays resolves the local audit retention window.
+//
+// Precedence: JMS_AUDIT_KEEP_DAYS, then the configuration file, then 0
+// (disabled). An unreadable or missing configuration is not an error here:
+// most commands do not need it, and a retention window that cannot be
+// resolved must not stop a command from running. An unparsable value is
+// ignored rather than guessed at — a typo in "90" must not turn into
+// "delete everything".
+func auditKeepDays(d Deps) int {
+	if raw := strings.TrimSpace(os.Getenv(obs.EnvAuditKeepDays)); raw != "" {
+		days, err := obs.ParseKeepDays(raw)
+		if err != nil {
+			fmt.Fprintf(d.Err, "jms: %s=%q ignored: %v\n", obs.EnvAuditKeepDays, raw, err)
+			return 0
+		}
+		return days
+	}
+	cfg, err := config.Load(d.ConfigPath)
+	if err != nil || cfg == nil {
+		return 0
+	}
+	return cfg.AuditKeepDays
 }
 
 // defaultAuditDir places the audit directory beside the configuration file.

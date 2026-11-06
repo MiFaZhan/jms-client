@@ -45,7 +45,67 @@ is meant for looking back over a window rather than watching live.`,
 	show.Flags().BoolVar(&failed, "failed", false, "Only failed commands")
 	show.Flags().StringVar(&export, "export", "", "Export format: md")
 	group.AddCommand(show)
+	group.AddCommand(newLogPruneCommand(deps))
 	return group
+}
+
+// newLogPruneCommand builds `jms log prune`.
+//
+// It exists next to the automatic prune because both are useful: the
+// automatic one enforces the window without anyone remembering to, and this
+// one answers "what would be deleted" and "delete it now" without waiting for
+// the next process start.
+func newLogPruneCommand(deps *Deps) *cobra.Command {
+	var (
+		keep   int
+		dryRun bool
+		dir    string
+	)
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Delete local audit files older than the retention window",
+		Long: `Delete local audit files older than the retention window.
+
+The window comes from --keep, else JMS_AUDIT_KEEP_DAYS, else audit_keep_days
+in the configuration file. The age is read from the file name
+(audit-YYYYMMDD-<pid>.jsonl), not from the modification time, so a copied
+directory does not silently keep files forever.
+
+Two safety rules: a file whose name carries no date is skipped, not deleted;
+and without a configured window this command does nothing and says so.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runLogPrune(cmd, *deps, keep, dryRun, dir)
+		},
+	}
+	cmd.Flags().IntVar(&keep, "keep", 0, "Keep this many days (overrides the configured window)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Report what would be deleted without deleting")
+	cmd.Flags().StringVar(&dir, "dir", "", "Audit directory (default: the configured one)")
+	return cmd
+}
+
+// runLogPrune applies the retention window.
+func runLogPrune(cmd *cobra.Command, deps Deps, keep int, dryRun bool, dir string) error {
+	target := strings.TrimSpace(dir)
+	if target == "" {
+		target = deps.Runtime.AuditDir
+	}
+	days := keep
+	if days <= 0 {
+		days = deps.Runtime.AuditKeepDays
+	}
+	if days <= 0 {
+		return fmt.Errorf("no retention window configured: pass --keep <days>, set %s, or add audit_keep_days to the configuration file",
+			obs.EnvAuditKeepDays)
+	}
+	result, err := obs.PruneAuditFiles(target, days, deps.Now(), dryRun)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(deps.Out, "jms: audit prune in %s: %s\n", target, result); err != nil {
+		return err
+	}
+	return nil
 }
 
 // logOptions carries the parsed `jms log show` flags.

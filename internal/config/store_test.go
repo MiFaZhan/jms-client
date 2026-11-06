@@ -387,3 +387,63 @@ func assertNoTempFiles(t *testing.T, dir string) {
 		}
 	}
 }
+
+// TestAuditKeepDaysRoundTrip pins the retention key: it is optional, it
+// survives a save/load cycle, and an out-of-range value is refused rather
+// than clamped (a wrong window silently deletes the wrong records).
+func TestAuditKeepDaysRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	body := `version = 2
+default_server = "bastion"
+audit_keep_days = 90
+
+[servers.bastion]
+internal = "https://internal.example:2280"
+username = "svc"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AuditKeepDays != 90 {
+		t.Fatalf("AuditKeepDays = %d, want 90", cfg.AuditKeepDays)
+	}
+
+	rendered, err := marshalConfig(cfg)
+	if err != nil {
+		t.Fatalf("marshalConfig: %v", err)
+	}
+	if !strings.Contains(string(rendered), "audit_keep_days = 90") {
+		t.Errorf("saved config dropped the retention key:\n%s", rendered)
+	}
+
+	// Unset stays unset: 0 means "never prune", and it must not be rendered.
+	cfg.AuditKeepDays = 0
+	rendered, err = marshalConfig(cfg)
+	if err != nil {
+		t.Fatalf("marshalConfig: %v", err)
+	}
+	if strings.Contains(string(rendered), "audit_keep_days") {
+		t.Errorf("a zero window was written to the file:\n%s", rendered)
+	}
+}
+
+func TestAuditKeepDaysValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"-1", "4000"} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		body := "version = 2\naudit_keep_days = " + value + "\n\n[servers.bastion]\ninternal = \"https://i.example:2280\"\nusername = \"svc\"\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Errorf("audit_keep_days = %s was accepted", value)
+		}
+	}
+}
