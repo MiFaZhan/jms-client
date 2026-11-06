@@ -1,0 +1,23 @@
+{
+ "count": 2,
+ "results": [
+  {
+   "id": "x",
+   "name": "x",
+   "resource_statistics": {
+    "users_amount": 9,
+    "groups_amount": 6,
+    "assets_amount": 29,
+    "nodes_amount": 8,
+    "zones_amount": 0,
+    "asset_perms_amount": 14
+   },
+   "is_default": true,
+   "is_root": false,
+   "internal": true,
+   "date_created": "x",
+   "created_by": "x",
+   "comment": ""
+  }
+ ]
+}

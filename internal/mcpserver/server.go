@@ -251,6 +251,10 @@ type Options struct {
 	Actor string
 	// Bus receives audit events; nil disables publication.
 	Bus *obs.Bus
+	// AuditDir is the directory the audit JSONL files live in, so the
+	// management surface can expose the local stream (jms_local_audit)
+	// without a second configuration path.
+	AuditDir string
 	// Sessions and Terminals are the pools to serve from.
 	Sessions  *connpool.SessionPool
 	Terminals *connpool.TerminalPool
@@ -389,6 +393,7 @@ func (s *Server) build() *mcp.Server {
 	register(srv, s.assetGrantTool)
 	register(srv, s.assetPermissionsTool)
 	register(srv, s.assetRevokeTool)
+	s.registerAdmin(srv)
 	if s.opts.Debug {
 		register(srv, s.poolStatusTool)
 	}
@@ -928,6 +933,11 @@ func strProp(description string) map[string]any {
 // intProp is an integer property.
 func intProp(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
+}
+
+// boolProp is a boolean property.
+func boolProp(description string) map[string]any {
+	return map[string]any{"type": "boolean", "description": description}
 }
 
 // decodeArgs unmarshals a tool call's arguments.

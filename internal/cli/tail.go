@@ -148,6 +148,12 @@ func renderAuditEvent(e obs.Event) string {
 	if e.Actor != "" {
 		b.WriteString("  [" + e.Actor + "]")
 	}
+	if e.Path != "" {
+		b.WriteString("  " + e.Path)
+	}
+	if e.Status != 0 {
+		b.WriteString(fmt.Sprintf("  -> %d", e.Status))
+	}
 	if e.Command != "" {
 		b.WriteString("  $ " + e.Command)
 	}

@@ -1,0 +1,93 @@
+{
+ "count": 30,
+ "results": [
+  {
+   "id": "x",
+   "name": "x",
+   "username": "x",
+   "secret_type": {
+    "value": "x",
+    "label": "x"
+   },
+   "labels": [],
+   "su_from": null,
+   "asset": {
+    "id": "x",
+    "name": "x",
+    "address": "x",
+    "type": {
+     "value": "x",
+     "label": "x"
+    },
+    "category": {
+     "value": "x",
+     "label": "x"
+    },
+    "platform": {
+     "id": 5,
+     "name": "x",
+     "type": "x"
+    },
+    "auto_config": {
+     "su_enabled": false,
+     "gateway_enabled": true,
+     "ansible_enabled": true,
+     "id": 5,
+     "ansible_config": {
+      "ansible_connection": "x",
+      "ansible_shell_type": "x"
+     },
+     "ping_enabled": true,
+     "ping_method": "x",
+     "ping_params": {},
+     "gather_facts_enabled": true,
+     "gather_facts_method": "x",
+     "gather_facts_params": {},
+     "change_secret_enabled": true,
+     "change_secret_method": "x",
+     "change_secret_params": {},
+     "push_account_enabled": true,
+     "push_account_method": "x",
+     "push_account_params": {
+      "groups": "x"
+     },
+     "verify_account_enabled": true,
+     "verify_account_method": "x",
+     "verify_account_params": {},
+     "gather_accounts_enabled": true,
+     "gather_accounts_method": "x",
+     "gather_accounts_params": {},
+     "remove_account_enabled": true,
+     "remove_account_method": "x",
+     "remove_account_params": {},
+     "platform": 5
+    }
+   },
+   "version": 0,
+   "ds": null,
+   "source": {
+    "value": "x",
+    "label": "x"
+   },
+   "source_id": null,
+   "login_by": null,
+   "connectivity": {
+    "value": "x",
+    "label": "x"
+   },
+   "change_secret_status": null,
+   "org_id": "x",
+   "org_name": "x",
+   "privileged": false,
+   "is_active": true,
+   "secret_reset": true,
+   "date_created": "x",
+   "date_updated": "x",
+   "date_last_login": "x",
+   "date_verified": "x",
+   "date_change_secret": null,
+   "created_by": "x",
+   "comment": ""
+  }
+ ]
+}

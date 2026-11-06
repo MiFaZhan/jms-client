@@ -1,0 +1,132 @@
+{
+ "count": 29,
+ "results": [
+  {
+   "protocols": [
+    {
+     "id": 41,
+     "name": "x",
+     "port": 23,
+     "port_from_addr": false,
+     "primary": false,
+     "required": false,
+     "default": false,
+     "public": true,
+     "secret_types": [
+      "x"
+     ],
+     "setting": {}
+    },
+    {
+     "id": 42,
+     "name": "x",
+     "port": 5900,
+     "port_from_addr": false,
+     "primary": false,
+     "required": false,
+     "default": false,
+     "public": true,
+     "secret_types": [
+      "x"
+     ],
+     "setting": {}
+    },
+    {
+     "id": 43,
+     "name": "x",
+     "port": 3389,
+     "port_from_addr": false,
+     "primary": false,
+     "required": false,
+     "default": false,
+     "public": true,
+     "secret_types": [
+      "x"
+     ],
+     "setting": {
+      "console": false,
+      "security": "x"
+     }
+    },
+    {
+     "id": 40,
+     "name": "x",
+     "port": 22,
+     "port_from_addr": false,
+     "primary": true,
+     "required": false,
+     "default": false,
+     "public": true,
+     "secret_types": [
+      "x",
+      "x"
+     ],
+     "setting": {
+      "sftp_home": "x",
+      "sftp_enabled": true
+     }
+    }
+   ],
+   "name": "x",
+   "assets_amount": 0,
+   "type": {
+    "value": "x",
+    "label": "x"
+   },
+   "id": 10,
+   "labels": [],
+   "charset": {
+    "value": "x",
+    "label": "x"
+   },
+   "custom_fields": [],
+   "su_method": null,
+   "automation": {
+    "id": 10,
+    "ansible_enabled": true,
+    "ansible_config": {
+     "ansible_connection": "x"
+    },
+    "ping_enabled": true,
+    "ping_method": "x",
+    "ping_params": {},
+    "push_account_enabled": true,
+    "push_account_method": "x",
+    "push_account_params": {
+     "home": "",
+     "sudo": "x",
+     "shell": "x",
+     "groups": ""
+    },
+    "gather_facts_enabled": true,
+    "gather_facts_method": "x",
+    "gather_facts_params": {},
+    "change_secret_enabled": true,
+    "change_secret_method": "x",
+    "change_secret_params": {},
+    "verify_account_enabled": true,
+    "verify_account_method": "x",
+    "verify_account_params": {},
+    "gather_accounts_enabled": true,
+    "gather_accounts_method": "x",
+    "gather_accounts_params": {},
+    "remove_account_enabled": true,
+    "remove_account_method": "x",
+    "remove_account_params": {}
+   },
+   "category": {
+    "value": "x",
+    "label": "x"
+   },
+   "gateway_enabled": true,
+   "internal": true,
+   "su_enabled": true,
+   "ds_enabled": false,
+   "date_created": "x",
+   "date_updated": "x",
+   "created_by": "x",
+   "comment": "",
+   "updated_by": "x"
+  }
+ ]
+}

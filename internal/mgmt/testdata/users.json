@@ -1,0 +1,72 @@
+{
+ "count": 9,
+ "results": [
+  {
+   "id": "x",
+   "name": "x",
+   "username": "x",
+   "email": "x",
+   "wechat": "",
+   "phone": {
+    "code": "x",
+    "phone": ""
+   },
+   "mfa_level": {
+    "value": 0,
+    "label": "x"
+   },
+   "source": {
+    "value": "x",
+    "label": "x"
+   },
+   "avatar_url": "x",
+   "groups": [
+    {
+     "id": "x",
+     "name": "x"
+    },
+    {
+     "id": "x",
+     "name": "x"
+    },
+    {
+     "id": "x",
+     "name": "x"
+    }
+   ],
+   "system_roles": [
+    {
+     "id": "x",
+     "display_name": "x"
+    }
+   ],
+   "labels": [],
+   "password_strategy": {
+    "value": "x",
+    "label": "x"
+   },
+   "is_superuser": true,
+   "is_service_account": false,
+   "is_valid": true,
+   "is_expired": false,
+   "is_active": true,
+   "is_otp_secret_key_bound": true,
+   "can_public_key_auth": true,
+   "mfa_enabled": true,
+   "need_update_password": false,
+   "is_face_code_set": false,
+   "mfa_force_enabled": true,
+   "is_first_login": false,
+   "login_blocked": false,
+   "date_expired": "x",
+   "date_joined": "x",
+   "last_login": "x",
+   "date_updated": "x",
+   "date_api_key_last_used": null,
+   "date_password_last_updated": "x",
+   "created_by": "x",
+   "updated_by": "x",
+   "comment": null
+  }
+ ]
+}

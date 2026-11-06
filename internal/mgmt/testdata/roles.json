@@ -1,0 +1,21 @@
+{
+ "count": 7,
+ "results": [
+  {
+   "id": "x",
+   "name": "x",
+   "display_name": "x",
+   "scope": {
+    "value": "x",
+    "label": "x"
+   },
+   "users_amount": 1,
+   "builtin": true,
+   "date_created": "x",
+   "date_updated": "x",
+   "created_by": "x",
+   "updated_by": "x",
+   "comment": ""
+  }
+ ]
+}

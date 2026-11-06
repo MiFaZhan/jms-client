@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,16 @@ const (
 	KindSessionRelogin Kind = "session.relogin"
 	KindEndpointSelect Kind = "endpoint.select"
 	KindError          Kind = "error"
+
+	// management-API kinds (MIFA-73). They record one REST call rather
+	// than one terminal session.
+	//
+	//   api.read    a management read succeeded or failed on the server
+	//   api.write   a management write was attempted and its outcome
+	//   api.denied  a call was refused locally, before any request
+	KindAPIRead   Kind = "api.read"
+	KindAPIWrite  Kind = "api.write"
+	KindAPIDenied Kind = "api.denied"
 )
 
 // Environment switches (DESIGN.md「审计日志」).
@@ -83,6 +94,14 @@ type Event struct {
 	IdleMS      int64     `json:"idle_ms,omitempty"`
 	Reason      string    `json:"reason,omitempty"`
 	Error       string    `json:"error,omitempty"`
+
+	// Path and Status describe one management-API call (MIFA-73). Path is
+	// the request path without the query string; Params carries the query
+	// with credential-looking values masked, so a parameter such as
+	// password=... never reaches the log.
+	Path   string `json:"path,omitempty"`
+	Params string `json:"params,omitempty"`
+	Status int    `json:"status,omitempty"`
 }
 
 // Subscriber receives events. A slow subscriber must never block the
@@ -748,4 +767,59 @@ func truncatePreview(s string, max int) string {
 		cut--
 	}
 	return s[:cut]
+}
+
+// ReadEvents reads every audit file in dir and returns the events ordered by
+// timestamp.
+//
+// The MCP surface uses this to expose the local audit stream the way
+// `jms log show` does. `jms tail` keeps its own incremental reader because
+// following a file needs byte offsets, which this whole-directory read does
+// not track; both parse the same on-disk format, and this one is the
+// reference for it.
+//
+// A missing directory is not an error: it means nothing has been recorded
+// yet.
+func ReadEvents(dir string) ([]Event, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read audit directory %s: %w", dir, err)
+	}
+	files := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "audit-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		files = append(files, filepath.Join(dir, name))
+	}
+	sort.Strings(files)
+
+	var events []Event
+	for _, path := range files {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("read %s: %w", path, err)
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			var e Event
+			if err := json.Unmarshal([]byte(trimmed), &e); err != nil {
+				// A malformed line must not hide the rest of the stream.
+				continue
+			}
+			events = append(events, e)
+		}
+	}
+	sort.SliceStable(events, func(i, j int) bool { return events[i].TS.Before(events[j].TS) })
+	return events, nil
 }

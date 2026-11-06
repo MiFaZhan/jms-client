@@ -1,0 +1,29 @@
+{
+ "count": 167021,
+ "results": [
+  {
+   "id": "x",
+   "username": "x",
+   "type": {
+    "value": "x",
+    "label": "x"
+   },
+   "ip": "x",
+   "city": "x",
+   "user_agent": "x",
+   "mfa": {
+    "value": 1,
+    "label": "x"
+   },
+   "reason": "",
+   "reason_display": "",
+   "backend": "x",
+   "backend_display": "x",
+   "status": {
+    "value": true,
+    "label": "x"
+   },
+   "datetime": "x"
+  }
+ ]
+}

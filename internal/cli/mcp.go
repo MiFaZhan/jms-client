@@ -194,6 +194,7 @@ func mcpOptions(deps Deps) mcpserver.Options {
 		Version:    effectiveVersion(),
 		Actor:      deps.Runtime.Actor,
 		Bus:        deps.Runtime.Bus,
+		AuditDir:   deps.Runtime.AuditDir,
 		Sessions:   deps.Runtime.Sessions,
 		Terminals:  deps.Runtime.Terminals,
 		Creds:      deps.Creds,
