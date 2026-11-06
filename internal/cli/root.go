@@ -160,6 +160,13 @@ func NewRootCommand(deps Deps) *cobra.Command {
 		// anything, so `jms login host && next` would silently continue.
 		// Naming the unknown command and failing is the honest outcome for a
 		// subcommand this milestone does not implement yet.
+		// The retention check runs here because this is the first point at
+		// which --config has been parsed: resolving the window before parsing
+		// would silently enforce the default machine's setting for
+		// `jms --config other.toml`.
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			pruneAuditOnStartup(cmd, deps)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()

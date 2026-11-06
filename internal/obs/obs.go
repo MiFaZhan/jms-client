@@ -442,6 +442,21 @@ func NewAuditWriter(opts AuditOptions) (*AuditWriter, error) {
 	}, nil
 }
 
+// AuditDirFrom resolves the audit directory for a caller that computed a
+// default: JMS_AUDIT_DIR wins, otherwise the configured value, otherwise the
+// config directory's audit/ subdirectory.
+//
+// It exists so the sink, the readers (`tail`, `log show`, `log prune`) and the
+// retention check all agree. They used to disagree: the sink honoured
+// JMS_AUDIT_DIR while the CLI's Runtime.AuditDir did not, so a relocated audit
+// directory was written to one place and read from another.
+func AuditDirFrom(configured string) (string, error) {
+	if env := strings.TrimSpace(os.Getenv(EnvAuditDir)); env != "" {
+		return env, nil
+	}
+	return auditDir(configured)
+}
+
 // auditDir resolves the directory that holds the per-pid files.
 //
 // An empty dir means <config_dir>/audit, so JMS_CONFIG (or an injected config

@@ -92,7 +92,7 @@ func runLogPrune(cmd *cobra.Command, deps Deps, keep int, dryRun bool, dir strin
 	}
 	days := keep
 	if days <= 0 {
-		days = deps.Runtime.AuditKeepDays
+		days = resolveAuditKeepDays(cmd, deps)
 	}
 	if days <= 0 {
 		return fmt.Errorf("no retention window configured: pass --keep <days>, set %s, or add audit_keep_days to the configuration file",
