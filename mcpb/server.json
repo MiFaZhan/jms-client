@@ -7,11 +7,11 @@
     "url": "https://github.com/MiFaZhan/jms-client",
     "source": "github"
   },
-  "version": "0.2.3",
+  "version": "0.2.4",
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/MiFaZhan/jms-client/releases/download/v0.2.3/jms-client.mcpb",
+      "identifier": "https://github.com/MiFaZhan/jms-client/releases/download/v0.2.4/jms-client.mcpb",
       "fileSha256": "d78089735c6f8613833e5cc85714ff3e51f6b0904f9c5f354b840259eaf34bc5",
       "transport": {
         "type": "stdio"
