@@ -5,411 +5,225 @@
 [![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg)](go.mod)
 
 **A command-line client and MCP server for [JumpServer v4](https://docs.jumpserver.org/zh/v4/) bastion hosts.**
-One self-contained binary that reaches the assets behind your bastion the same way the web terminal does — no VPN client, no SSH config, no per-host credentials.
-
-Use it on its own to list assets, run commands, open shells and move files. Run `jms mcp` and an AI assistant (Claude Desktop, Claude Code, Codex, Cursor, pi, …) can do the same things through pooled, audited connections.
+One static binary that reaches the assets behind your bastion the same way the web console does — no VPN client, no SSH config, no per-host credentials.
 
 ```console
 $ jms exec web-01 "systemctl is-active nginx"
 active
 ```
 
-**English** · [简体中文](README.zh-CN.md)
-
-**Docs:** [Command reference](docs/command-reference.md) ·
-[Addresses and proxies](docs/networking.md) ·
-[Troubleshooting](docs/troubleshooting.md) ·
-[Design](DESIGN.md)
-
----
+**English** · [简体中文](README.zh-CN.md) · **Docs:** [Command reference](docs/command-reference.md) · [MCP](docs/mcp.md) · [Configuration](docs/configuration.md) · [Networking](docs/networking.md) · [Troubleshooting](docs/troubleshooting.md) · [Design](DESIGN.md)
 
 ## Why this exists
 
-Reaching a bastion usually means a browser tab, or a `~/.ssh/config` you maintain by hand. Neither composes with a shell pipeline, a build script, or an AI agent.
+Reaching a bastion normally means a browser tab, or a `~/.ssh/config` you maintain by hand. Neither composes with a shell pipeline, a CI job, or an AI agent. `jms-client` talks to the same two JumpServer APIs the web console uses (Core's REST API and KoKo's terminal gateway):
 
-`jms-client` talks to the same two JumpServer APIs the web console uses (Core's REST API and KoKo's terminal gateway), so:
-
-- **Credentials never sit in a config file.** The password and TOTP secret go to your OS credential store. The config file holds addresses and usernames only, so it is safe to sync, back up, or commit.
-- **One login serves many commands.** Connections are pooled per server/asset/account/protocol and reused.
-- **The same config works inside and outside the office.** Give a server both an internal and an external address and the client picks whichever answers.
-- **Everything is logged locally.** Every command an AI agent runs is written to a JSONL audit stream you can read, follow, or join interactively.
-
-## Features
-
-| | |
-|---|---|
-| **Single static binary** | No runtime dependencies. Linux, macOS, Windows on x86_64 and arm64. |
-| **Dual-address failover** | Internal/external addresses probed and selected automatically, with a remembered last-good address for fast cold starts. |
-| **Connection pooling** | Login sessions and terminals are reused per `server/asset/account/protocol`. Idle connections are reaped; broken ones are rebuilt. |
-| **Credentials in the OS store** | Windows Credential Manager, macOS Keychain, Linux Secret Service. Environment-variable fallback for containers and CI. |
-| **Asset management** | Create, update, delete and list assets, and grant or revoke access — all from the CLI or MCP, without leaving the terminal for the web console. |
-| **MCP server** | Fifteen tools over stdio for AI clients, sharing one pooled process. |
-| **Local audit stream** | Structured JSONL per process; `jms tail` to follow it, `jms attach` to watch and join. |
-| **Two terminal backends** | WebSocket (default, same path as the web console) and SSH, with automatic selection. |
+- **No VPN, no SSH config, no per-host credentials.** Configure one server alias; the client logs in and reaches the assets behind it.
+- **One login serves many commands.** Logins are pooled per server and terminals per `server/asset/account/protocol`; both are reused.
+- **The same config works inside and outside the office.** Give a server an internal and an external address; the client probes them in turn, fails over to the one that answers, and remembers the last good one.
+- **Everything is logged locally, and an AI assistant can drive the same pool.** `jms mcp` speaks the Model Context Protocol over stdio, so Claude Desktop, Claude Code, Codex, Cursor and friends use the same pooled, audited connections.
 
 ## Requirements
 
 - **JumpServer v4** with the **KoKo** component reachable from your machine. JumpServer v3 and earlier are not supported.
-- An account on that JumpServer with the assets you want to reach already authorized.
-- The WebSocket backend requires nothing beyond a reachable HTTP(S) address. The SFTP and SSH features additionally require KoKo's SSH port (default `2222`) to be open on the network path — many deployments only expose the web port, so check before relying on them.
+- A JumpServer account already authorized for the assets you want to reach.
+- The WebSocket terminal backend needs only a reachable HTTP(S) address. SFTP and the SSH backend additionally need KoKo's SSH port (default `2222`) open — many deployments expose only the web port.
 
 ## Install
 
-### Prebuilt binaries (recommended)
+Prebuilt archives live in [**Releases**](https://github.com/MiFaZhan/jms-client/releases/latest). Put `jms` (`jms.exe` on Windows) on your `PATH`.
 
-Download the archive for your platform from [**Releases**](https://github.com/MiFaZhan/jms-client/releases/latest) and put the `jms` binary (`jms.exe` on Windows) on your `PATH`.
-
-| Platform | File |
+| Platform | Archive |
 |---|---|
-| Windows x86_64 | `jms-client_<version>_windows_amd64.zip` |
-| Windows arm64 | `jms-client_<version>_windows_arm64.zip` |
-| macOS Apple Silicon | `jms-client_<version>_darwin_arm64.tar.gz` |
-| macOS Intel | `jms-client_<version>_darwin_amd64.tar.gz` |
 | Linux x86_64 | `jms-client_<version>_linux_amd64.tar.gz` |
 | Linux arm64 | `jms-client_<version>_linux_arm64.tar.gz` |
+| macOS Intel | `jms-client_<version>_darwin_amd64.tar.gz` |
+| macOS Apple Silicon | `jms-client_<version>_darwin_arm64.tar.gz` |
+| Windows x86_64 | `jms-client_<version>_windows_amd64.zip` |
+| Windows arm64 | `jms-client_<version>_windows_arm64.zip` |
 
-`checksums.txt` in the same release lets you verify the download:
+Each archive also contains `LICENSE` and `README.md`. Verify the download against `checksums.txt` from the same release: `sha256sum -c --ignore-missing checksums.txt` on Linux, `shasum -a 256 -c --ignore-missing checksums.txt` on macOS.
 
-```sh
-sha256sum -c --ignore-missing checksums.txt     # Linux
-shasum -a 256 -c --ignore-missing checksums.txt # macOS
-```
-
-### Scoop (Windows)
+**Scoop (Windows)** — the manifest lives in `MiFaZhan/scoop-bucket` under the app name `jms-client`:
 
 ```powershell
 scoop bucket add mifazhan https://github.com/MiFaZhan/scoop-bucket
 scoop install jms-client
 ```
 
-Upgrade later with `scoop update jms-client`.
+**Go** (1.25 or newer) — `go install github.com/MiFaZhan/jms-client/cmd/jms@latest`. **From source** — `git clone https://github.com/MiFaZhan/jms-client && cd jms-client && go build -o jms ./cmd/jms`
 
-### Go
-
-Requires Go 1.25 or newer:
-
-```sh
-go install github.com/MiFaZhan/jms-client/cmd/jms@latest
-```
-
-### From source
-
-```sh
-git clone https://github.com/MiFaZhan/jms-client
-cd jms-client
-go build -o jms ./cmd/jms
-```
-
-### For MCP clients only
-
-If all you want is the AI integration and you would rather not manage a binary yourself, download **`jms-client.mcpb`** from [Releases](https://github.com/MiFaZhan/jms-client/releases/latest) and open it with your MCP client (Claude Desktop and other MCPB-aware clients handle this by double-click). That single bundle contains the binaries for all six platform/architecture combinations; a bundled launcher picks the right one at startup.
+**MCPB bundle** — download `jms-client.mcpb` from [Releases](https://github.com/MiFaZhan/jms-client/releases/latest) and open it with an MCPB-aware client. It carries a binary for all six platform/architecture combinations above plus a launcher that picks the right one, so no Go toolchain is needed.
 
 ## Quick start
 
-### 1. Store your server
+The credential is validated against a reachable address **before** anything is written, so a mistyped value leaves no trace on disk; it goes to the OS credential store, never into `config.toml`. Either address may be left empty, but at least one is required, and the first server you add becomes the default. A target is `<asset>` or `<asset>@<server>`; without `@<server>` the default server is used.
 
 ```console
 $ jms config add bastion
-Internal URL (http(s)://..., empty to skip): https://jumpserver.corp.example.com/
+Internal URL (http(s)://..., empty to skip): https://jumpserver.example.com/
 External URL (http(s)://..., empty to skip):
 Username: alice
 Password:
-Confirm password:
+Confirm Password:
 TOTP secret (base32, empty to enter the code each time):
 Server "bastion" saved to /home/alice/.config/jms/config.toml
 Server "bastion" is now the default.
-```
-
-Either address may be left empty, but at least one is required. The credentials are validated against a reachable address **before** anything is written, so a mistyped password changes nothing on disk. The first server you add becomes the default.
-
-### 2. Check it
-
-```console
 $ jms config test
 Server: bastion (default)
 
-Endpoint  URL                                     Reachable  Probe  Login
-external  https://jumpserver.corp.example.com/     yes        12ms   ok
+Endpoint  URL                                Reachable  Probe  Login
+external  https://jumpserver.example.com/    yes        12ms   ok
 
 Credentials: keyring
+$ jms ls
+Using external endpoint https://jumpserver.example.com/
+Name     Address     Platform  Type
+web-01   10.20.0.11  Linux     Host
+db-01    10.20.0.32  Linux     Host
+
+Total: 2 asset(s)
+$ jms exec web-01 "uptime"
+ 14:22:31 up 12 days,  3:07,  2 users,  load average: 0.21, 0.18, 0.15
+$ jms login web-01
+Connected to web-01 (ws backend). Press Ctrl+] to exit.
+$ jms sftp web-01:/var/log/app.log .
+Transferred 2048 bytes in 120ms
+MD5 verified: 5d41402abc4b2a76b9719d911017c592
 ```
 
-`config test` probes every configured address and attempts a real login on each reachable one, so a network problem is reported separately from a rejected password, and you can see which addresses actually work. An address can pass the TCP probe and still fail the login — a VPN or proxy can accept the connection with nothing useful behind it.
+## Connect an AI assistant (MCP)
 
-### 3. Use it
+`jms mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio. Any MCP-capable client can then list assets, run commands and move files through the same pooled connections your shell uses.
+
+```json
+{
+  "mcpServers": {
+    "jms": { "command": "jms", "args": ["mcp"], "env": { "JMS_MCP_ENDPOINT": "external", "JMS_MCP_BACKEND": "ws", "JMS_MCP_EXEC_TIMEOUT": "10m" } }
+  }
+}
+```
+
+`jms mcp --print-config` prints that entry without the `env` block; it contains no credential. The MCP process has no per-call flags — your client starts one long-lived process — so the endpoint (`internal`|`external`), the backend (`ssh`|`ws`|`auto`) and the exec timeout are steered by environment variables. `jms mcp --config <path>` does **not** reach the MCP server; use `JMS_CONFIG` or the per-tool `config_path` argument.
+
+| Block | Tools | Count |
+|---|---|---|
+| Core | `jms_ls`, `jms_resolve_asset`, `jms_exec`, `jms_sftp_upload`, `jms_sftp_download`, `jms_sftp_relay`, `jms_config_list`, `jms_asset_list`, `jms_asset_show`, `jms_asset_create`, `jms_asset_update`, `jms_asset_delete`, `jms_asset_grant`, `jms_asset_permissions`, `jms_asset_revoke` | 15 |
+| Management reads | `jms_audit_list`, `jms_session_list`, `jms_session_show`, `jms_command_list`, `jms_node_tree`, `jms_platform_list`, `jms_account_list`, `jms_identity_list`, `jms_identity_show`, `jms_job_list`, `jms_job_execution_list`, `jms_ticket_list`, `jms_ticket_show`, `jms_local_audit` | 14 |
+| Writes (off by default) | `jms_node_write`, `jms_account_secret` | +2 |
+| Debug (off by default) | `jms_pool_status` | +1 |
+
+Registered tools: **29** by default (15 core + 14 management reads), **15** with `JMS_MCP_TOOLSET=core`, **31** with `JMS_MCP_WRITE=limited`, **32** — the maximum — with `JMS_MCP_WRITE=limited` and `JMS_MCP_DEBUG=1`. The write tools are **off by default**: `JMS_MCP_WRITE` must be exactly `limited`, `JMS_MCP_WRITE_DOMAINS` narrows them to `node`, `account` or both, and the destructive operations require a `confirm` argument. The gates are read when the server starts, so change them and restart the client.
+
+**Details:** [docs/mcp.md](docs/mcp.md) · [简体中文](docs/mcp.zh-CN.md)
+
+## Provision assets and permissions
+
+JumpServer separates "an asset exists" from "a user may reach it": only an `AssetPermission` exposes an asset to a user. A newly created asset therefore shows up in `jms asset list` (the admin view) and **not** in `jms ls` (the per-user view) until it has been granted. `--grant-me` does both steps in one command:
 
 ```console
-$ jms ls                                   # assets you are authorized for
-$ jms ls -q web                            # search by keyword
-$ jms exec web-01 "uptime"                 # one command, exit code passes through
-$ jms login web-01                         # interactive shell (Ctrl+] to exit)
-$ jms sftp web-01:/var/log/app.log .       # download
-$ jms sftp ./config.yml web-01:/etc/app/   # upload
+$ jms asset create "web-02" 10.20.0.44 --account ops --username ops --password '…' --grant-me
+Created web-02 (id 3f9c2a1e-8d44-4c0a-9d0e-1b7c5e2a4411)
+Granted to the current user via permission grant-web-02
+$ jms asset grant web-02 --user alice --group ops
+Granted web-02 to 1 user(s) and 1 user group(s) via permission grant-web-02 (id 8c1d0f22-...)
+$ jms asset permissions web-02
+Name          Users   Groups  Assets  Nodes  Protocols  Actions
+grant-web-02  alice   ops     web-02  -      all        connect
+
+Total: 1 permission(s)
+$ jms asset revoke grant-web-02 --yes
+Revoked grant-web-02 (id 8c1d0f22-...)
 ```
 
-## Connecting an AI assistant (MCP)
+Without `--grant-me` the create command prints a note on stderr that the asset is not connectable yet, and exits 0. `--user` takes a user id or an exact username, `--group` a group id or an exact group name; both may be repeated or comma-separated. With neither `--user` nor `--group` the authenticated user is granted, and `--self` is additive. Server-side defaults: accounts `@ALL`, protocols `all`, actions `connect`. `jms asset permissions` prints users, groups, assets and nodes, so group-only and node-only rules are readable. Deleting an asset does not delete the permissions that referenced it.
 
-`jms mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio. Any MCP-capable client can then list assets, run commands and transfer files through the same pooled connections your shell uses.
+**Details:** [docs/command-reference.md](docs/command-reference.md) · [简体中文](docs/command-reference.zh-CN.md)
 
-```json
-{
-  "mcpServers": {
-    "jms": {
-      "command": "jms",
-      "args": ["mcp"]
-    }
-  }
-}
-```
+## Command map
 
-Print this snippet at any time with:
+Every top-level command and its subcommands. `--config <path>` is the only global flag; full flag tables are in [docs/command-reference.md](docs/command-reference.md).
 
-```sh
-jms mcp --print-config
-```
-
-Because the MCP process has no command-line flags (your client launches one long-lived process and cannot add arguments per call), the endpoint, backend and command timeout are steered with environment variables in that client entry:
-
-```json
-{
-  "mcpServers": {
-    "jms": {
-      "command": "jms",
-      "args": ["mcp"],
-      "env": {
-        "JMS_MCP_BACKEND": "ws",
-        "JMS_MCP_EXEC_TIMEOUT": "10m"
-      }
-    }
-  }
-}
-```
-
-### Tools
-
-| Tool | Purpose | Required arguments |
+| Command | Subcommands | What it does |
 |---|---|---|
-| `jms_ls` | List or search authorized assets | — |
-| `jms_resolve_asset` | Resolve an asset to its address, account and protocol | `asset` |
-| `jms_exec` | Run one command and return its output | `asset`, `command` |
-| `jms_sftp_upload` | Upload a local file to an asset | `src`, `asset`, `dst` |
-| `jms_sftp_download` | Download a file from an asset | `asset`, `src`, `dst` |
-| `jms_sftp_relay` | Stream a file directly between two assets | `src_spec`, `dst_spec` |
-| `jms_config_list` | List configured servers and their credential source | — |
-| `jms_asset_list` | List every asset on the server (admin view) | — |
-| `jms_asset_show` | Show one asset in detail | `target` |
-| `jms_asset_create` | Create a host asset | `name`, `address` |
-| `jms_asset_update` | Rename, re-address or re-comment an asset | `target` |
-| `jms_asset_delete` | Delete an asset | `target` |
-| `jms_asset_grant` | Grant users access to an asset | `target` |
-| `jms_asset_permissions` | List permissions, optionally for one asset | — |
-| `jms_asset_revoke` | Revoke a permission | `target` |
-
-An eighth tool, `jms_pool_status`, is registered when `JMS_MCP_DEBUG=1` and reports the shape of the connection pool. It is for diagnosing the server, not for daily use.
-
-Most tools accept optional `server`, `config_path`, `account`, `protocol` and `timeout` arguments. Remote specs use the form `<asset>[@<server>]:<path>`.
-
-Two behaviours worth knowing when you write prompts for an agent:
-
-- **A non-zero exit code is not reported as a failure.** `jms_exec` returns the command's output; the remote exit status is recorded in the audit log but not surfaced in the tool result. If your agent must branch on success, make the command say so (`… && echo OK || echo FAIL`).
-- **Commands are never replayed.** If a call fails after the command was already delivered to the host, the client reports the error instead of retrying, because `rm`, `reboot` and friends are not idempotent. A dropped connection triggers one recovery attempt through a fresh login, but only for a command that produced no output at all.
-
-## Commands at a glance
-
-| Command | What it does |
-|---|---|
-| `jms config add \| list \| remove \| set-default \| test` | Manage server entries and their credentials. |
-| `jms ls [server] [-q keyword]` | List or search authorized assets. |
-| `jms exec <target> <command...>` | Run one command on an asset. |
-| `jms login <target>` | Open an interactive shell. |
-| `jms sftp <src> <dst>` | Upload or download a file. |
-| `jms ssh-pipe <target> [command...]` | Bridge stdio to an asset (for `rsync -e`). |
-| `jms tail [-f]` | Follow the local audit stream. |
-| `jms attach` | Watch a running host, optionally joining its session. |
-| `jms log show` | Query the audit log. |
-| `jms mcp` | Run the stdio MCP server. |
-| `jms asset list \| show \| create \| update \| delete` | Manage assets on the bastion. |
-| `jms asset grant \| permissions \| revoke` | Manage who may reach an asset. |
-
-### Provisioning assets
-
-JumpServer separates "an asset exists" from "a user may reach it": creating
-an asset records it, but only an `AssetPermission` exposes it to a user.
-That is why a new asset appears in `jms asset list` (the admin view) and
-not in `jms ls` (the per-user view) until it has been granted.
-
-`--grant-me` on create does both steps in one command:
-
-```bash
-jms asset create "host-preview-01" 192.168.100.252 \
-    --account yunze --username yunze --password '…' --grant-me
-```
-
-Grants can also be managed separately:
-
-```bash
-jms asset grant "host-preview-01" --self      # or --account @ALL --protocol all
-jms asset grant "host-preview-01" --group ops # exact group name, or its id
-jms asset permissions "host-preview-01"       # what grants this asset
-jms asset revoke "grant-host-preview-01" --yes
-```
-
-`--user` takes a user id or an exact username, `--group` takes a group id
-or an exact group name, and both may be repeated. A grant needs at least
-one user or group; `--self` still adds the authenticated user.
-`jms asset permissions` shows the users, groups, assets and nodes of each
-rule, so group-only and node-only rules are readable too.
-
-Deleting an asset does not delete the permissions that referenced it; the
-two are separate objects, so `jms asset revoke` is the command that ends
-access.
-
-Target syntax is `<asset>@<server>`; omitting `@<server>` uses the default server.
-
-**Full reference:** [docs/command-reference.md](docs/command-reference.md) ·
-[简体中文](docs/command-reference.zh-CN.md)
+| `jms api` | `get <path> [server]` | Read the management API by path (read-only, path allowlist) |
+| `jms asset` | `list`, `show`, `create`, `update`, `delete`, `grant`, `permissions`, `revoke` | Manage assets and who may reach them |
+| `jms attach` | — | Watch a running host's event stream, optionally run commands |
+| `jms completion` | `bash`, `fish`, `powershell`, `zsh` | Shell completion script |
+| `jms config` | `add`, `list`, `remove`, `set-default`, `test` | Manage server entries and their credentials |
+| `jms exec` | — | Run one command on an asset |
+| `jms login` | — | Open an interactive shell on an asset |
+| `jms ls` | — | List or search the assets you are authorized for |
+| `jms log` | `show`, `prune` | Query and prune the local audit log |
+| `jms mcp` | — | Run the stdio MCP server |
+| `jms sftp` | — | Upload or download a file |
+| `jms ssh-pipe` | — | Bridge stdio to an asset (for `rsync -e`) |
+| `jms tail` | — | Follow the local audit stream |
+| `jms version` | — | Print version information |
 
 ## Configuration
 
-Config lives at:
-
 | Platform | Path |
 |---|---|
+| Linux | `$XDG_CONFIG_HOME/jms/config.toml`, else `~/.config/jms/config.toml` |
+| macOS | `~/Library/Application Support/jms/config.toml` |
 | Windows | `%AppData%\jms\config.toml` |
-| Linux / macOS | `~/.config/jms/config.toml` (or `$XDG_CONFIG_HOME/jms/config.toml`) |
 
-Override with the `--config` flag or the `JMS_CONFIG` environment variable. Relocating the file also relocates the audit directory, because both live beside it.
+`--config` overrides `JMS_CONFIG`, which overrides the platform default. Those five root keys — `version`, `default_server`, `proxy`, `audit_keep_days` and `[servers.<alias>]` — are the whole schema. At least one of `internal` / `external` is required per server; `prefer` picks the address to try first, `pin` restricts the server to one address (no failover), `ssh_port` overrides the KoKo SSH port.
 
 ```toml
 version = 2
 default_server = "bastion"
-
-# Optional global proxy policy. Omitted means: connect directly.
-# proxy = "socks5://127.0.0.1:1080"
-
+# proxy = "socks5://127.0.0.1:1080"     # global proxy; omitted means direct
+# audit_keep_days = 90                  # retention days; 0 means never prune
 [servers.bastion]
-internal = "http://192.168.1.10:2280/"          # internal address (optional)
-external = "https://bastion.example.com/"       # external address (optional)
+internal = "http://192.168.1.10:2280/"       # optional
+external = "https://jumpserver.example.com/" # optional
 username = "alice"
-
-# prefer = "external"       # try this address first; default is internal
-# pin = "internal"          # use only this address: no probing, no failover
-# ssh_port = 2222           # KoKo SSH port if not the default
-# proxy = "direct"          # force a direct connection for this server
-
-[servers.staging]
-external = "https://jumpserver.staging.example.com/"
-username = "alice"
-prefer = "external"
 ```
-
-Every field except the username is optional, but at least one address is required.
-
-When a server has both addresses, the client probes them in turn and logs into the first that answers, remembering the last-good one for ten minutes. The client **connects directly by default** and ignores `HTTP_PROXY` and friends — a proxy must be configured explicitly.
-
-**Details:** [docs/networking.md](docs/networking.md) ·
-[简体中文](docs/networking.zh-CN.md)
-
-### Credentials
-
-| Data | Where it lives |
-|---|---|
-| Aliases, addresses, username, preferences | `config.toml`, plain text (0600) |
-| **password**, **TOTP secret** | The OS credential store, under the service name `jms-client` |
-
-The config file is written atomically and never contains a credential, which is what makes it safe to sync between machines. Acknowledge the boundary this implies: it protects against file leakage and copying a config to another machine, not against a malicious process running as the same user.
-
-For headless environments (containers, CI, WSL without a Secret Service) there are environment-variable fallbacks. **The environment takes precedence over the credential store.**
-
-| Variable | Meaning |
-|---|---|
-| `JMS_PASSWORD_<ALIAS>` | Password for that server alias. |
-| `JMS_OTP_<ALIAS>` | TOTP secret for that server alias. |
-
-Aliases are upper-cased and `-` becomes `_`, so `bastion-eu` becomes `JMS_PASSWORD_BASTION_EU`. An exported-but-empty variable counts as unset rather than as an empty password. If neither source has a credential, the command fails with a message naming the variable to set — it never falls back to storing a plaintext password.
-
-A locked credential store (the usual state of a GNOME Keyring with no desktop session) fails in milliseconds with a message naming the environment variable to set — see [troubleshooting](docs/troubleshooting.md).
-
-### Environment variables
 
 | Variable | Effect |
 |---|---|
-| `JMS_CONFIG` | Path to the configuration file. |
-| `JMS_PASSWORD_<ALIAS>`, `JMS_OTP_<ALIAS>` | Credential fallback (see above). |
-| `JMS_ACTOR` | Name recorded in the audit log; use it to tell several clients on one machine apart. |
-| `JMS_AUDIT` | Set to `off` to disable the audit log. |
-| `JMS_AUDIT_DIR` | Relocate the audit directory. |
-| `JMS_AUDIT_FULL` | Set to `1` to record untruncated output previews. |
-| `JMS_AUDIT_PREVIEW_BYTES` | Truncation limit for output previews (default 4096). |
-| `JMS_MCP_ENDPOINT` | MCP only: force `internal` or `external`. |
-| `JMS_MCP_BACKEND` | MCP only: force `ssh`, `ws` or `auto`. |
-| `JMS_MCP_EXEC_TIMEOUT` | MCP only: default `jms_exec` timeout, e.g. `10m` or `600`. |
-| `JMS_MCP_DEBUG` | MCP only: set to `1` to register `jms_pool_status`. |
-| `JMS_WS_DUMP` | Dump raw WebSocket frames, for protocol debugging. |
+| `JMS_CONFIG` | Configuration file path |
+| `JMS_PASSWORD_<ALIAS>` | Credential for that alias (alias uppercased, `-` becomes `_`) |
+| `JMS_OTP_<ALIAS>` | TOTP secret for that alias |
+| `JMS_ACTOR` | Actor name stamped on audit events |
+| `JMS_AUDIT`, `JMS_AUDIT_DIR`, `JMS_AUDIT_KEEP_DAYS` | Disable the audit log, relocate it, set the retention window |
+| `JMS_MCP_ENDPOINT`, `JMS_MCP_BACKEND`, `JMS_MCP_EXEC_TIMEOUT` | MCP only: address kind, backend, exec timeout |
 
-## Terminal backends
+**Details:** [docs/configuration.md](docs/configuration.md) · [简体中文](docs/configuration.zh-CN.md) · [docs/networking.md](docs/networking.md)
 
-JumpServer's KoKo component offers two terminal channels, and `jms-client` speaks both.
+## Security and audit
 
-| Backend | Channel | Notes |
-|---|---|---|
-| `ws` (default) | `/koko/ws/terminal/` | The same path the web console uses. Works wherever the web console works. 30s default command timeout. |
-| `ssh` | KoKo SSH port (default 2222) | Native exit statuses per command, no output-marker parsing. Requires the port to be reachable, and SFTP depends on it. |
-
-Select it with `--backend ssh`, or `--backend auto` to try SSH and fall back to WebSocket. The backend that last succeeded for an address is remembered in `state.json`, so a cold start goes straight to it instead of waiting out a handshake on a blocked port. In MCP, the remembered backend also lets the process recover from a stale connection without a restart.
-
-Tools that need SFTP — `jms sftp`, `jms_sftp_upload`, `jms_sftp_download`, `jms_sftp_relay` — require KoKo's SSH port to be open. If file transfers hang or fail while `exec` works fine, that port is the first thing to check.
-
-## Audit log
-
-Every command is recorded as one JSON object per line:
-
-```json
-{"ts":"2026-10-05T14:32:01.123+08:00","pid":12345,"actor":"mcp:pi","kind":"exec.end","server":"prod","asset":"web-01","backend":"ssh","endpoint":"external","command":"systemctl status nginx","exit_code":0,"duration_ms":118,"output_bytes":2140,"preview":"● nginx.service ...","pool":"hit","idle_ms":68000}
-```
-
-Files are written to `<config dir>/audit/audit-YYYYMMDD-<pid>.jsonl`, one file per process, with `0600` permissions on both the directory and the files. Per-process files avoid the Windows problem of several processes appending to one locked file, and they let a long-running host and a one-shot CLI invocation coexist.
-
-Event kinds: `exec.start`, `exec.end`, `pool.cold`, `pool.hit`, `pool.evict`, `pool.reap`, `session.login`, `session.relogin`, `endpoint.select`, `error`.
-
-Output previews are truncated to 4096 bytes by default (`JMS_AUDIT_PREVIEW_BYTES`, or `JMS_AUDIT_FULL=1` for everything). Nothing in the log interpolates a credential.
+- The credential and the TOTP secret live in the OS credential store (Windows Credential Manager, macOS Keychain, Linux Secret Service) under the service name `jms-client`. The config file is written atomically with mode `0600` and never contains a credential.
+- The environment variable takes precedence over the credential store, which is how you run headless (SSH, CI, a container). A blank value counts as unset.
+- Every command is written to a local JSONL audit stream in `<config dir>/audit/audit-YYYYMMDD-<pid>.jsonl`, one file per process, mode `0600`. The CLI records pool and session events; the MCP surface records `exec.start` / `exec.end` for every tool call. Output previews are truncated to 4096 bytes and credential-looking query values are masked.
+- `jms log show` queries that stream, `jms tail` follows it, `jms attach` watches a running host's live events.
 
 ## Limitations
 
 - **JumpServer v4 only.** The v3 authentication and terminal APIs differ.
-- **`jms sftp` does not do recursive copies or asset-to-asset relay.** Use the MCP `jms_sftp_relay` tool for the latter, or relay through your local machine.
+- **No jump-host chain.** Proxying or jumping through another asset is not implemented.
+- **`jms sftp` does not do recursive copies or asset-to-asset relay.** The MCP tool `jms_sftp_relay` relays; the CLI does not.
 - **32-bit platforms are not built.** Only x86_64 and arm64.
-- **The audit log is local.** Nothing is forwarded to a central collector; ship the files yourself if you need to aggregate.
-- **A jump-host chain (proxy/jump through another asset) is not implemented.**
+- **The audit log is local.** Nothing is forwarded to a central collector; ship the files yourself.
+- **`jms asset permissions <asset>` matches the asset relation only.** A rule that grants a *node* instead of the asset is not listed for that asset, and a failed detail read there is skipped silently.
+- **Management writes are gated.** The MCP write tools need `JMS_MCP_WRITE=limited`, and `jms_asset_delete` and `jms_asset_revoke` have no confirmation argument, unlike their CLI counterparts.
+- **The SSH backend has not been exercised against a live bastion** in this tree; the KoKo SSH entry is disabled on several deployments.
 
-**When something goes wrong:** [docs/troubleshooting.md](docs/troubleshooting.md) ·
-[简体中文](docs/troubleshooting.zh-CN.md)
+## Documentation
+
+- [docs/command-reference.md](docs/command-reference.md) — every command, flag, default, exit code
+- [docs/mcp.md](docs/mcp.md) — MCP setup, tools, gates, error semantics
+- [docs/configuration.md](docs/configuration.md) — config schema, credential stores, audit format
+- [docs/networking.md](docs/networking.md) — addresses, failover, proxies, backends
+- [docs/troubleshooting.md](docs/troubleshooting.md) — symptom → cause → fix
+- [DESIGN.md](DESIGN.md) — architecture, protocol findings, failure rules (Chinese)
 
 ## Development
 
-```sh
-go build ./...     # compile
-go test ./...      # unit and protocol-regression tests
-go vet ./...
-gofmt -l .         # must print nothing
-```
-
-Integration tests connect to a real JumpServer and are gated behind an environment variable; without it they skip, so a fresh clone is green:
-
-```sh
-JMS_TEST_SERVER=bastion go test ./...
-```
-
-Architecture, the reverse-engineered KoKo protocol details, pool design and failure-handling rules live in [DESIGN.md](DESIGN.md) (written in Chinese).
-
-Releases are cut from GitHub Actions:
-
-```sh
-gh workflow run release --repo MiFaZhan/jms-client -f tag=v0.1.7
-```
+Build, test and format with `go build ./... && go test ./... && go vet ./... && gofmt -l .` — `gofmt` must print nothing. The test suite runs against local fakes and needs no JumpServer, so a fresh clone is green. Releases are cut with GoReleaser; `scripts/release.sh` stamps the MCPB manifest and publishes the Scoop manifest.
 
 ## License
 
-MIT © MiFaZhan. See [LICENSE](LICENSE).
-
-The design and the KoKo protocol findings build on [GCS-ZHN/jms-cli](https://github.com/GCS-ZHN/jms-cli).
+MIT © MiFaZhan — see [LICENSE](LICENSE). The design and the KoKo protocol findings build on [GCS-ZHN/jms-cli](https://github.com/GCS-ZHN/jms-cli).
