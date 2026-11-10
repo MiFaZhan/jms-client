@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/MiFaZhan/jms-client/internal/mgmt"
 	"github.com/MiFaZhan/jms-client/internal/permits"
 )
 
@@ -25,6 +26,7 @@ type assetGrantArgs struct {
 	Target     string   `json:"target"`
 	Name       string   `json:"name"`
 	Users      []string `json:"users"`
+	UserGroups []string `json:"user_groups"`
 	Accounts   []string `json:"accounts"`
 	Protocols  []string `json:"protocols"`
 	Actions    []string `json:"actions"`
@@ -42,17 +44,19 @@ type assetRevokeArgs struct {
 func (s *Server) assetGrantTool() (*mcp.Tool, mcp.ToolHandler) {
 	tool := &mcp.Tool{
 		Name: ToolAssetGrant,
-		Description: "Grant users access to a JumpServer asset by creating an AssetPermission. " +
-			"A newly created asset is not reachable until it has been granted.",
+		Description: "Grant users or user groups access to a JumpServer asset by creating an AssetPermission. " +
+			"A newly created asset is not reachable until it has been granted. " +
+			"Give at least one of users or user_groups.",
 		InputSchema: objectSchema([]string{"target"}, map[string]map[string]any{
 			"server":      strProp("Server alias; the default server when omitted."),
 			"config_path": strProp("Configuration file path override."),
 			"target":      strProp("Asset name or id to grant."),
 			"name":        strProp("Permission name; defaults to grant-<asset>."),
-			"users":       strProp("User ids to grant; the authenticated user when omitted."),
-			"accounts":    strProp("Accounts to allow; @ALL when omitted."),
-			"protocols":   strProp("Protocols to allow; all when omitted."),
-			"actions":     strProp("Actions to allow; connect when omitted."),
+			"users":       arrayProp("User ids or exact usernames; the authenticated user when neither users nor user_groups is given."),
+			"user_groups": arrayProp("User group ids or exact group names; a name must match exactly one group."),
+			"accounts":    arrayProp("Accounts to allow; @ALL when omitted."),
+			"protocols":   arrayProp("Protocols to allow; all when omitted."),
+			"actions":     arrayProp("Actions to allow; connect when omitted."),
 			"comment":     strProp("Free-text note."),
 		}),
 	}
@@ -80,8 +84,17 @@ func (s *Server) assetGrantTool() (*mcp.Tool, mcp.ToolHandler) {
 			return errorResult(err), nil
 		}
 
-		userIDs := args.Users
-		if len(userIDs) == 0 {
+		userIDs, err := mgmt.ResolveUserIDs(ctx, sess.Client, args.Users)
+		if err != nil {
+			s.failOp(args.Server, "", "asset grant "+args.Target, err)
+			return errorResult(err), nil
+		}
+		groupIDs, err := mgmt.ResolveGroupIDs(ctx, sess.Client, args.UserGroups)
+		if err != nil {
+			s.failOp(args.Server, "", "asset grant "+args.Target, err)
+			return errorResult(err), nil
+		}
+		if len(userIDs) == 0 && len(groupIDs) == 0 {
 			uid, _, err := permits.CurrentUser(ctx, sess.Client)
 			if err != nil {
 				s.failOp(args.Server, "", "asset grant "+args.Target, err)
@@ -98,6 +111,7 @@ func (s *Server) assetGrantTool() (*mcp.Tool, mcp.ToolHandler) {
 		granted, err := permits.Grant(ctx, sess.Client, permits.GrantSpec{
 			Name:      permName,
 			UserIDs:   userIDs,
+			GroupIDs:  groupIDs,
 			AssetIDs:  []string{asset.ID},
 			Accounts:  args.Accounts,
 			Protocols: args.Protocols,
@@ -110,8 +124,8 @@ func (s *Server) assetGrantTool() (*mcp.Tool, mcp.ToolHandler) {
 		}
 
 		started := s.startOp(srv.Name, "", "", "asset grant "+args.Target)
-		text := fmt.Sprintf("Granted %s to %d user(s) via permission %s (id %s).",
-			asset.Name, len(userIDs), granted.Name, granted.ID)
+		text := fmt.Sprintf("Granted %s to %d user(s) and %d user group(s) via permission %s (id %s).",
+			asset.Name, len(userIDs), len(groupIDs), granted.Name, granted.ID)
 		s.endOp(started, srv.Name, "", "", "asset grant "+args.Target,
 			transferOutcome{output: text, outputBytes: len(text)})
 		return textResult(text), nil
@@ -162,12 +176,20 @@ func (s *Server) assetPermissionsTool() (*mcp.Tool, mcp.ToolHandler) {
 				s.failOp(args.Server, "", "asset permissions", err)
 				return errorResult(err), nil
 			}
-			// The list endpoint omits the relations, so expand each row.
+			// The list endpoint omits the relations, so expand every row
+			// that still needs it. The condition is count-driven: a rule
+			// that grants users AND groups AND nodes must be expanded just
+			// like a users-only one. A failed read is an error, not a
+			// blank row: silence would look like "this rule grants
+			// nobody".
 			for i := range listed {
-				if len(listed[i].Assets) == 0 && len(listed[i].Users) == 0 {
-					if detail, err := permits.Get(ctx, sess.Client, listed[i].ID); err == nil {
-						listed[i] = detail
+				if listed[i].NeedsDetail() {
+					detail, err := permits.Get(ctx, sess.Client, listed[i].ID)
+					if err != nil {
+						s.failOp(args.Server, "", "asset permissions", err)
+						return errorResult(fmt.Errorf("read permission %q: %w", listed[i].Name, err)), nil
 					}
+					listed[i] = detail
 				}
 			}
 		}
@@ -187,22 +209,16 @@ func renderPermissionList(listed []permits.Permission) string {
 	}
 	lines := make([]string, 0, len(listed))
 	for _, p := range listed {
-		users := make([]string, 0, len(p.Users))
-		for _, u := range p.Users {
-			users = append(users, u.Name)
-		}
-		assets := make([]string, 0, len(p.Assets))
-		for _, a := range p.Assets {
-			assets = append(assets, a.Name)
-		}
 		actions := make([]string, 0, len(p.Actions))
 		for _, a := range p.Actions {
 			actions = append(actions, a.Value)
 		}
-		lines = append(lines, fmt.Sprintf("%s  users=%s  assets=%s  protocols=%s  actions=%s",
+		lines = append(lines, fmt.Sprintf("%s  users=%s  groups=%s  assets=%s  nodes=%s  protocols=%s  actions=%s",
 			p.Name,
-			strings.Join(users, ","),
-			strings.Join(assets, ","),
+			strings.Join(permits.RelationNames(p.Users), ","),
+			strings.Join(permits.RelationNames(p.UserGroups), ","),
+			strings.Join(permits.RelationNames(p.Assets), ","),
+			strings.Join(permits.RelationNames(p.Nodes), ","),
 			strings.Join(p.Protocols, ","),
 			strings.Join(actions, ",")))
 	}

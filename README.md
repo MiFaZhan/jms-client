@@ -249,9 +249,16 @@ Grants can also be managed separately:
 
 ```bash
 jms asset grant "host-preview-01" --self      # or --account @ALL --protocol all
+jms asset grant "host-preview-01" --group ops # exact group name, or its id
 jms asset permissions "host-preview-01"       # what grants this asset
 jms asset revoke "grant-host-preview-01" --yes
 ```
+
+`--user` takes a user id or an exact username, `--group` takes a group id
+or an exact group name, and both may be repeated. A grant needs at least
+one user or group; `--self` still adds the authenticated user.
+`jms asset permissions` shows the users, groups, assets and nodes of each
+rule, so group-only and node-only rules are readable too.
 
 Deleting an asset does not delete the permissions that referenced it; the
 two are separate objects, so `jms asset revoke` is the command that ends

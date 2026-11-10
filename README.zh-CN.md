@@ -247,9 +247,15 @@ jms asset create "主机-云则预演01" 192.168.100.252 \
 
 ```bash
 jms asset grant "主机-云则预演01" --self      # 或 --account @ALL --protocol all
+jms asset grant "主机-云则预演01" --group 运维组  # 精确组名，或直接给组 id
 jms asset permissions "主机-云则预演01"       # 哪些授权覆盖了该资产
 jms asset revoke "grant-主机-云则预演01" --yes
 ```
+
+`--user` 接受用户 id 或精确用户名，`--group` 接受用户组 id 或精确组名，两者都可重复。
+一条授权至少要有一个用户或一个用户组；`--self` 仍表示附带当前登录用户。
+`jms asset permissions` 会同时列出每条规则的用户、用户组、资产与节点，
+只有组规则或只有节点规则的授权也能看清。
 
 删除资产**不会**连带删除引用它的授权记录——两者是独立对象，
 要断掉访问得用 `jms asset revoke`。

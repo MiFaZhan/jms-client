@@ -44,6 +44,10 @@ type NamedID struct {
 	ID          string `json:"id"`
 	Name        string `json:"name,omitempty"`
 	DisplayName string `json:"display_name,omitempty"`
+	// IsServiceAccount marks a machine account among a group's members.
+	// The group serializer sends it; dropping it would make a service
+	// account indistinguishable from a person in an authorization review.
+	IsServiceAccount bool `json:"is_service_account,omitempty"`
 }
 
 // Label is the best human-readable name the record has.
@@ -123,12 +127,17 @@ func (p Phone) String() string {
 }
 
 // Group is one user group.
+//
+// The list view reports users_amount only; the detail view expands users
+// as (id, name, is_service_account) objects. Users is therefore populated
+// only by GetIdentity, which reads the detail record.
 type Group struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Comment    string `json:"comment,omitempty"`
-	UsersCount int    `json:"users_amount,omitempty"`
-	OrgName    string `json:"org_name,omitempty"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Comment    string    `json:"comment,omitempty"`
+	Users      []NamedID `json:"users,omitempty"`
+	UsersCount int       `json:"users_amount,omitempty"`
+	OrgName    string    `json:"org_name,omitempty"`
 }
 
 // Role is one v4 RBAC role.
@@ -228,6 +237,25 @@ func GetIdentity(ctx context.Context, c *api.Client, kind, idOrName string) (any
 		if err := getByIDOrName(ctx, c, PathGroups, slug, &out); err != nil {
 			return nil, err
 		}
+		// A name lookup may go through the list view or through a build
+		// whose retrieve serializer drops users; re-read the record by id
+		// so the answer always carries members. An id lookup already
+		// returned the detail (slug == id), so it is left alone. A failed
+		// read is surfaced: returning the group with an empty user list
+		// would claim "no members" when the truth is "not read".
+		if out.ID != "" && slug != out.ID && len(out.Users) == 0 {
+			// The list serializer reports users_amount while the detail
+			// serializer does not, so keep the count the list gave us.
+			count := out.UsersCount
+			var detail Group
+			if err := c.Get(ctx, PathGroups+out.ID+"/", nil, &detail); err != nil {
+				return nil, fmt.Errorf("read members of group %q: %w", out.ID, err)
+			}
+			if detail.UsersCount == 0 {
+				detail.UsersCount = count
+			}
+			out = detail
+		}
 		return out, nil
 	case IdentRoles:
 		var out Role
@@ -247,11 +275,136 @@ func GetIdentity(ctx context.Context, c *api.Client, kind, idOrName string) (any
 	}
 }
 
+// ResolveUserIDs maps user ids or exact usernames to user ids.
+//
+// The grant API keys its relations on ids, while an operator usually has
+// usernames. A UUID is read as an id; anything else is filtered by the
+// server on the username field and matched exactly again here, so case
+// differences never grant the wrong account. Zero matches and several
+// matches are both errors — the resolver never guesses.
+func ResolveUserIDs(ctx context.Context, c *api.Client, refs []string) ([]string, error) {
+	return resolveIDs(ctx, c, PathUsers, "user", "username", refs,
+		func(u User, ref string) bool { return u.Username == ref },
+		func(u User) string { return u.ID })
+}
+
+// ResolveGroupIDs maps user group ids or exact names to group ids.
+//
+// Same contract as ResolveUserIDs; a duplicate group name is an error
+// rather than a first match, because granting the wrong group is a silent
+// authorization mistake.
+func ResolveGroupIDs(ctx context.Context, c *api.Client, refs []string) ([]string, error) {
+	return resolveIDs(ctx, c, PathGroups, "user group", "name", refs,
+		func(g Group, ref string) bool { return g.Name == ref },
+		func(g Group) string { return g.ID })
+}
+
+// resolveIDs is the shared id-or-exact-name resolver behind the two grant
+// helpers.
+//
+// The name lookup uses the server-side exact filter (username for users,
+// name for groups) rather than the detail route: those query parameters
+// are declared by the upstream filter sets, so a name never has to travel
+// through a UUID primary-key lookup.
+func resolveIDs[T any](ctx context.Context, c *api.Client, path, kind, filterKey string, refs []string,
+	match func(T, string) bool, idOf func(T) string) ([]string, error) {
+	out := make([]string, 0, len(refs))
+	seen := make(map[string]bool, len(refs))
+	for _, raw := range refs {
+		ref := strings.TrimSpace(raw)
+		if ref == "" {
+			// A blank principal is a caller mistake. Skipping it would
+			// silently turn a grant aimed at nobody into a grant for the
+			// authenticated user.
+			return nil, fmt.Errorf("%s reference must not be blank", kind)
+		}
+		if looksLikeUUID(ref) {
+			if seen[ref] {
+				continue
+			}
+			var one T
+			err := c.Get(ctx, path+ref+"/", nil, &one)
+			if err == nil {
+				if id := idOf(one); id != "" {
+					addResolvedID(&out, seen, id)
+					continue
+				}
+			} else if apiErr, ok := api.AsAPIError(err); !ok || apiErr.StatusCode != 404 {
+				return nil, fmt.Errorf("resolve %s %q: %w", kind, ref, err)
+			}
+			// A UUID-shaped value may still be a legal username or group
+			// name; fall through to the name filter.
+		}
+		page, err := listPage[T](ctx, c, path, ListOptions{
+			Limit:   MaxLimit,
+			Filters: url.Values{filterKey: []string{ref}},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s %q: %w", kind, ref, err)
+		}
+		var matches []T
+		for _, row := range page.Results {
+			if match(row, ref) {
+				matches = append(matches, row)
+			}
+		}
+		switch len(matches) {
+		case 0:
+			return nil, fmt.Errorf("no %s matches %q; pass an id or an exact name", kind, ref)
+		case 1:
+			id := idOf(matches[0])
+			if id == "" {
+				return nil, fmt.Errorf("%s %q resolved to an empty id", kind, ref)
+			}
+			addResolvedID(&out, seen, id)
+		default:
+			return nil, fmt.Errorf("%q matches %d %ss; pass the id instead", ref, len(matches), kind)
+		}
+	}
+	return out, nil
+}
+
+func addResolvedID(out *[]string, seen map[string]bool, id string) {
+	if seen[id] {
+		return
+	}
+	seen[id] = true
+	*out = append(*out, id)
+}
+
+// looksLikeUUID reports whether s has the 8-4-4-4-12 UUID shape.
+//
+// JumpServer ids are UUIDs; taking one as an id avoids a lookup and keeps
+// an id the caller cannot read (but may still hold) usable.
+func looksLikeUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+			if !isHex {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // getByIDOrName fetches path+slug/, falling back to a name search.
 //
 // JumpServer addresses most records by UUID, but a person reading a report
-// usually has the name. The fallback costs one extra request only when the
-// id lookup 404s, so the common case stays one request.
+// usually has the name: recent builds resolve a non-id slug through the
+// viewset's slug_field (username for users, name otherwise), so the detail
+// route usually answers a name directly. The search fallback only costs an
+// extra request when that 404s, and takes an exact match only, so "admin"
+// never silently resolves to "admin-2".
 func getByIDOrName[T any](ctx context.Context, c *api.Client, path, slug string, out *T) error {
 	err := c.Get(ctx, path+slug+"/", nil, out)
 	if err == nil {
@@ -260,8 +413,6 @@ func getByIDOrName[T any](ctx context.Context, c *api.Client, path, slug string,
 	if apiErr, ok := api.AsAPIError(err); !ok || apiErr.StatusCode != 404 {
 		return err
 	}
-	// Not an id: search by name and take an exact match only, so "admin"
-	// never silently resolves to "admin-2".
 	page, listErr := listPage[T](ctx, c, path, ListOptions{Limit: MaxLimit, Filters: url.Values{"search": []string{slug}}})
 	if listErr != nil {
 		return err

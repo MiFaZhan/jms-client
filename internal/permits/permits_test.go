@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/MiFaZhan/jms-client/internal/api"
@@ -221,5 +222,124 @@ func TestCurrentUserFallsBackToUsername(t *testing.T) {
 	}
 	if name != "mifazhan" {
 		t.Errorf("name = %q, want the username when no display name is set", name)
+	}
+}
+
+// TestGrantWithGroupsOnlySendsUserGroups pins the group-only write: the
+// serializer field is user_groups and it takes ids; users must be absent
+// rather than an empty array so a rule never accidentally looks like it
+// targets "no users" explicitly.
+func TestGrantWithGroupsOnlySendsUserGroups(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "p1", "name": "grant-a"})
+	}))
+
+	if _, err := Grant(context.Background(), client, GrantSpec{
+		Name:     "grant-a",
+		GroupIDs: []string{"g1"},
+		AssetIDs: []string{"a1"},
+	}); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	groups, _ := gotBody["user_groups"].([]any)
+	if len(groups) != 1 || groups[0] != "g1" {
+		t.Errorf("user_groups = %v, want [g1]", gotBody["user_groups"])
+	}
+	if _, present := gotBody["users"]; present {
+		t.Errorf("users = %v, want the field omitted for a group-only grant", gotBody["users"])
+	}
+}
+
+// TestGrantWithUsersAndGroupsSendsBoth covers the mixed write.
+func TestGrantWithUsersAndGroupsSendsBoth(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "p1", "name": "grant-a"})
+	}))
+
+	if _, err := Grant(context.Background(), client, GrantSpec{
+		Name:     "grant-a",
+		UserIDs:  []string{"u1"},
+		GroupIDs: []string{"g1", "g2"},
+		AssetIDs: []string{"a1"},
+	}); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	users, _ := gotBody["users"].([]any)
+	if len(users) != 1 || users[0] != "u1" {
+		t.Errorf("users = %v, want [u1]", gotBody["users"])
+	}
+	groups, _ := gotBody["user_groups"].([]any)
+	if len(groups) != 2 || groups[0] != "g1" || groups[1] != "g2" {
+		t.Errorf("user_groups = %v, want [g1 g2]", gotBody["user_groups"])
+	}
+}
+
+// TestGrantRequiresAUserOrAGroup makes sure a rule with no principal is
+// rejected before any request is sent.
+func TestGrantRequiresAUserOrAGroup(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the server must not be called when no principal is given")
+	}))
+	_, err := Grant(context.Background(), client, GrantSpec{Name: "x", AssetIDs: []string{"a1"}})
+	if err == nil {
+		t.Fatal("expected an error when neither a user nor a group is given")
+	}
+	if !strings.Contains(err.Error(), "user group") {
+		t.Errorf("error = %q, want it to name both principals", err)
+	}
+}
+
+// TestPermissionNeedsDetail covers the list-summary heuristic that used to
+// skip group-only and node-only rules (no users and no assets).
+func TestPermissionNeedsDetail(t *testing.T) {
+	n := func(v int) *int { return &v }
+	cases := []struct {
+		name string
+		perm Permission
+		want bool
+	}{
+		{
+			name: "users only, counted but not expanded",
+			perm: Permission{UsersAmount: n(1)},
+			want: true,
+		},
+		{
+			name: "groups only, counted but not expanded",
+			perm: Permission{UserGroupsAmount: n(1), AssetsAmount: n(1)},
+			want: true,
+		},
+		{
+			name: "nodes only, counted but not expanded",
+			perm: Permission{NodesAmount: n(1)},
+			want: true,
+		},
+		{
+			name: "already expanded",
+			perm: Permission{
+				Users:      []Relation{{ID: "u1", Name: "alice"}},
+				UserGroups: []Relation{{ID: "g1", Name: "ops"}},
+				Assets:     []Relation{{ID: "a1", Name: "host"}},
+				Nodes:      []Relation{{ID: "n1", Name: "node"}},
+			},
+			want: false,
+		},
+		{
+			name: "counts say zero",
+			perm: Permission{UsersAmount: n(0), UserGroupsAmount: n(0), AssetsAmount: n(0), NodesAmount: n(0)},
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.perm.NeedsDetail(); got != tc.want {
+				t.Errorf("NeedsDetail() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
