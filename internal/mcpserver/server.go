@@ -935,6 +935,17 @@ func intProp(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
 }
 
+// arrayProp is an array-of-strings property. The Go argument is a
+// []string, so the schema has to say array; a client that follows a
+// "string" declaration sends a value the decoder rejects.
+func arrayProp(description string) map[string]any {
+	return map[string]any{
+		"type":        "array",
+		"description": description,
+		"items":       map[string]any{"type": "string"},
+	}
+}
+
 // boolProp is a boolean property.
 func boolProp(description string) map[string]any {
 	return map[string]any{"type": "boolean", "description": description}

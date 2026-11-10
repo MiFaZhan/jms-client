@@ -75,26 +75,41 @@ func (a Action) MarshalJSON() ([]byte, error) {
 	return json.Marshal(a.Value)
 }
 
+// Relation is one expanded relation of a permission: a user, a user
+// group, an asset or a node. All four share the same (id, name) shape.
+type Relation struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// RelationNames returns the display names of the given relations.
+func RelationNames(relations []Relation) []string {
+	names := make([]string, 0, len(relations))
+	for _, r := range relations {
+		names = append(names, r.Name)
+	}
+	return names
+}
+
 // Permission is one authorization rule.
+//
+// The list endpoint carries the relation *counts* and leaves the relation
+// arrays null; the detail endpoint expands both. The amount fields are
+// pointers so "the server did not report a count" stays distinguishable
+// from "the count is zero" — only the first case needs a detail read.
 type Permission struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Users []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	} `json:"users"`
-	UserGroups []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	} `json:"user_groups"`
-	Assets []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	} `json:"assets"`
-	Nodes []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	} `json:"nodes"`
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Users      []Relation `json:"users"`
+	UserGroups []Relation `json:"user_groups"`
+	Assets     []Relation `json:"assets"`
+	Nodes      []Relation `json:"nodes"`
+
+	UsersAmount      *int `json:"users_amount"`
+	UserGroupsAmount *int `json:"user_groups_amount"`
+	AssetsAmount     *int `json:"assets_amount"`
+	NodesAmount      *int `json:"nodes_amount"`
+
 	Accounts  []string `json:"accounts"`
 	Protocols []string `json:"protocols"`
 	Actions   []Action `json:"actions"`
@@ -103,12 +118,40 @@ type Permission struct {
 	DateStart string   `json:"date_start"`
 }
 
+// NeedsDetail reports whether this row is a list summary whose relations
+// still have to be read from the detail endpoint.
+//
+// A relation is missing when its array is empty but the server reports a
+// nonzero count for it. When the server reports no count at all (older
+// builds, fixtures) the relations are unknown rather than empty, so the
+// detail is read as well; that keeps the node-only and group-only rules
+// visible instead of rendering them as blank.
+func (p Permission) NeedsDetail() bool {
+	return relationMissing(p.UsersAmount, len(p.Users)) ||
+		relationMissing(p.UserGroupsAmount, len(p.UserGroups)) ||
+		relationMissing(p.AssetsAmount, len(p.Assets)) ||
+		relationMissing(p.NodesAmount, len(p.Nodes))
+}
+
+func relationMissing(amount *int, expanded int) bool {
+	if expanded > 0 {
+		return false
+	}
+	if amount != nil {
+		return *amount > 0
+	}
+	return true
+}
+
 // GrantSpec describes one permission to create.
 type GrantSpec struct {
 	// Name is the permission's display name; it must be unique.
 	Name string
 	// UserIDs are the users the grant applies to.
 	UserIDs []string
+	// GroupIDs are the user groups the grant applies to. At least one
+	// UserID or GroupID is required: a rule with neither grants nothing.
+	GroupIDs []string
 	// AssetIDs are the assets being granted.
 	AssetIDs []string
 	// Accounts selects which accounts are usable; empty means AccountAll.
@@ -123,18 +166,20 @@ type GrantSpec struct {
 
 // grantPayload is the request body the AssetPermission serializer accepts.
 //
-// The serializer declares users, assets, nodes, accounts, protocols and
-// actions as optional, but a permission with no user and no asset grants
-// nothing, so the caller is required to supply both.
+// The serializer declares users, user_groups, assets, nodes, accounts,
+// protocols and actions as optional, but a permission with no user, no
+// group and no asset grants nothing, so the caller is required to supply
+// at least one principal and one asset.
 type grantPayload struct {
-	Name      string   `json:"name"`
-	Users     []string `json:"users"`
-	Assets    []string `json:"assets"`
-	Accounts  []string `json:"accounts"`
-	Protocols []string `json:"protocols"`
-	Actions   []string `json:"actions"`
-	Comment   string   `json:"comment"`
-	IsActive  bool     `json:"is_active"`
+	Name       string   `json:"name"`
+	Users      []string `json:"users,omitempty"`
+	UserGroups []string `json:"user_groups,omitempty"`
+	Assets     []string `json:"assets"`
+	Accounts   []string `json:"accounts"`
+	Protocols  []string `json:"protocols"`
+	Actions    []string `json:"actions"`
+	Comment    string   `json:"comment"`
+	IsActive   bool     `json:"is_active"`
 }
 
 // DefaultActions is what a permission grants when GrantSpec.Actions is
@@ -152,8 +197,8 @@ func Grant(ctx context.Context, c *api.Client, spec GrantSpec) (Permission, erro
 	if strings.TrimSpace(spec.Name) == "" {
 		return Permission{}, errors.New("permission name is required")
 	}
-	if len(spec.UserIDs) == 0 {
-		return Permission{}, errors.New("at least one user is required")
+	if len(spec.UserIDs) == 0 && len(spec.GroupIDs) == 0 {
+		return Permission{}, errors.New("at least one user or user group is required: set UserIDs and/or GroupIDs")
 	}
 	if len(spec.AssetIDs) == 0 {
 		return Permission{}, errors.New("at least one asset is required")
@@ -173,14 +218,15 @@ func Grant(ctx context.Context, c *api.Client, spec GrantSpec) (Permission, erro
 	}
 
 	payload := grantPayload{
-		Name:      spec.Name,
-		Users:     spec.UserIDs,
-		Assets:    spec.AssetIDs,
-		Accounts:  accounts,
-		Protocols: protocols,
-		Actions:   actions,
-		Comment:   spec.Comment,
-		IsActive:  true,
+		Name:       spec.Name,
+		Users:      spec.UserIDs,
+		UserGroups: spec.GroupIDs,
+		Assets:     spec.AssetIDs,
+		Accounts:   accounts,
+		Protocols:  protocols,
+		Actions:    actions,
+		Comment:    spec.Comment,
+		IsActive:   true,
 	}
 
 	var created Permission
@@ -221,7 +267,7 @@ func FindByAsset(ctx context.Context, c *api.Client, assetID string) ([]Permissi
 	}
 	out := make([]Permission, 0, len(list))
 	for _, summary := range list {
-		if len(summary.Assets) == 0 {
+		if relationMissing(summary.AssetsAmount, len(summary.Assets)) {
 			// The summary carries no assets; read the detail.
 			detail, err := Get(ctx, c, summary.ID)
 			if err != nil {

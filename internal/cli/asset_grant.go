@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/MiFaZhan/jms-client/internal/mgmt"
 	"github.com/MiFaZhan/jms-client/internal/permits"
 )
 
@@ -16,6 +17,7 @@ func newAssetGrantCommand(deps *Deps) *cobra.Command {
 		server    string
 		endpoint  string
 		userNames []string
+		groups    []string
 		accounts  []string
 		protocols []string
 		actions   []string
@@ -25,15 +27,18 @@ func newAssetGrantCommand(deps *Deps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "grant <asset-name-or-id> [server]",
-		Short: "Grant users access to an asset",
+		Short: "Grant users or user groups access to an asset",
 		Long: `Grant access to an asset by creating an AssetPermission.
 
 A freshly created asset is not reachable: JumpServer only exposes it to a
 user through a permission record. Until this command (or the console) has
 granted it, the asset shows up in "jms asset list" but not in "jms ls".
 
+Principals are users and/or user groups; at least one is required.
+--user takes a user id or an exact username, --group takes a group id or
+an exact group name, and both may be repeated or comma-separated.
 --self grants the authenticated user, which is the common case while
-provisioning.`,
+provisioning and also the default when no --user or --group is given.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 2 {
@@ -50,23 +55,24 @@ provisioning.`,
 				return err
 			}
 
-			userIDs := make([]string, 0, len(userNames)+1)
-			var currentName string
-			if self || len(userNames) == 0 {
-				uid, uname, err := permits.CurrentUser(ctx, client)
+			userIDs, err := mgmt.ResolveUserIDs(ctx, client, userNames)
+			if err != nil {
+				return err
+			}
+			groupIDs, err := mgmt.ResolveGroupIDs(ctx, client, groups)
+			if err != nil {
+				return err
+			}
+			// --self is additive; with neither users nor groups the
+			// authenticated user is the principal, as before.
+			if self || (len(userIDs) == 0 && len(groupIDs) == 0) {
+				uid, _, err := permits.CurrentUser(ctx, client)
 				if err != nil {
 					return fmt.Errorf("resolve the current user: %w", err)
 				}
-				userIDs = append(userIDs, uid)
-				currentName = uname
-			}
-			// Explicit user names have to be resolved to ids; the API keys
-			// the relation on the user id, not the name.
-			for _, uname := range userNames {
-				if uname == currentName {
-					continue
+				if !containsString(userIDs, uid) {
+					userIDs = append(userIDs, uid)
 				}
-				return fmt.Errorf("granting a user other than the current one needs the user id; pass --self or omit --user")
 			}
 
 			permName := name
@@ -77,6 +83,7 @@ provisioning.`,
 			granted, err := permits.Grant(ctx, client, permits.GrantSpec{
 				Name:      permName,
 				UserIDs:   userIDs,
+				GroupIDs:  groupIDs,
 				AssetIDs:  []string{asset.ID},
 				Accounts:  accounts,
 				Protocols: protocols,
@@ -86,20 +93,31 @@ provisioning.`,
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(deps.Out, "Granted %s to %d user(s) via permission %s (id %s)\n",
-				asset.Name, len(userIDs), granted.Name, granted.ID)
+			fmt.Fprintf(deps.Out, "Granted %s to %d user(s) and %d user group(s) via permission %s (id %s)\n",
+				asset.Name, len(userIDs), len(groupIDs), granted.Name, granted.ID)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Force an address: internal|external")
-	cmd.Flags().BoolVar(&self, "self", false, "Grant the authenticated user (the default)")
-	cmd.Flags().StringSliceVar(&userNames, "user", nil, "User name to grant (only the current user is supported)")
+	cmd.Flags().BoolVar(&self, "self", false, "Also grant the authenticated user")
+	cmd.Flags().StringSliceVar(&userNames, "user", nil, "User id or exact username to grant (repeatable)")
+	cmd.Flags().StringSliceVar(&groups, "group", nil, "User group id or exact name to grant (repeatable)")
 	cmd.Flags().StringSliceVar(&accounts, "account", nil, "Accounts to allow (default @ALL)")
 	cmd.Flags().StringSliceVar(&protocols, "protocol", nil, "Protocols to allow (default all)")
 	cmd.Flags().StringSliceVar(&actions, "action", nil, "Actions to allow (default connect)")
 	cmd.Flags().StringVar(&name, "name", "", "Permission name (default grant-<asset>)")
 	cmd.Flags().StringVar(&comment, "comment", "", "Free-text note")
 	return cmd
+}
+
+// containsString reports whether list holds s.
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // newAssetPermissionsCommand builds `jms asset permissions`.
@@ -141,23 +159,29 @@ func newAssetPermissionsCommand(deps *Deps) *cobra.Command {
 				if err != nil {
 					return err
 				}
-			}
-			// The list endpoint carries no relations, so expand each row
-			// before rendering; otherwise the users/assets columns are blank.
-			expanded := make([]permits.Permission, 0, len(listed))
-			for _, p := range listed {
-				if len(p.Assets) == 0 && len(p.Users) == 0 {
-					if detail, err := permits.Get(ctx, client, p.ID); err == nil {
+				// The list endpoint carries counts but no relations, so
+				// expand every row that still needs it; a group-only or
+				// node-only rule has no users and no assets, and used to
+				// be skipped entirely. The asset-scoped branch above
+				// already returns expanded details, so this runs once.
+				expanded := make([]permits.Permission, 0, len(listed))
+				for _, p := range listed {
+					if p.NeedsDetail() {
+						detail, err := permits.Get(ctx, client, p.ID)
+						if err != nil {
+							return fmt.Errorf("read permission %q: %w", p.Name, err)
+						}
 						p = detail
 					}
+					expanded = append(expanded, p)
 				}
-				expanded = append(expanded, p)
+				listed = expanded
 			}
-			if len(expanded) == 0 {
+			if len(listed) == 0 {
 				fmt.Fprintln(deps.Out, "No permissions found.")
 				return nil
 			}
-			printPermissionTable(deps.Out, expanded)
+			printPermissionTable(deps.Out, listed)
 			return nil
 		},
 	}
@@ -168,24 +192,18 @@ func newAssetPermissionsCommand(deps *Deps) *cobra.Command {
 // printPermissionTable renders the permission table.
 func printPermissionTable(out io.Writer, listed []permits.Permission) {
 	table := newTable(out)
-	table.setHeader("Name", "Users", "Assets", "Protocols", "Actions")
+	table.setHeader("Name", "Users", "Groups", "Assets", "Nodes", "Protocols", "Actions")
 	for _, p := range listed {
-		users := make([]string, 0, len(p.Users))
-		for _, u := range p.Users {
-			users = append(users, u.Name)
-		}
-		assets := make([]string, 0, len(p.Assets))
-		for _, a := range p.Assets {
-			assets = append(assets, a.Name)
-		}
 		actions := make([]string, 0, len(p.Actions))
 		for _, a := range p.Actions {
 			actions = append(actions, a.Value)
 		}
 		table.addRow(
 			p.Name,
-			orDash(strings.Join(users, ",")),
-			orDash(strings.Join(assets, ",")),
+			orDash(strings.Join(permits.RelationNames(p.Users), ",")),
+			orDash(strings.Join(permits.RelationNames(p.UserGroups), ",")),
+			orDash(strings.Join(permits.RelationNames(p.Assets), ",")),
+			orDash(strings.Join(permits.RelationNames(p.Nodes), ",")),
 			orDash(strings.Join(p.Protocols, ",")),
 			orDash(strings.Join(actions, ",")),
 		)
