@@ -211,11 +211,13 @@ Output: `Transferred N bytes in <duration>` and, when verified, `MD5 verified: <
 | `--chunk` | int | `0` | — | Chunk size in bytes; `0` means 1 MiB |
 | `--endpoint` | string | `""` | — | Force an address: `internal` or `external` |
 | `--account` | string | `""` | — | Account override |
+| `--transport` | string | `auto` | — | Transfer channel: `auto`, `ssh` or `web` |
 
 - A remote spec is `<asset>[@<server>]:<path>`. The **first colon** splits host from path, so the path may contain further colons. An empty remote path is refused.
 - The direction is inferred: a remote destination is an upload, a remote source is a download.
 - A side is remote when it contains a colon, except a Windows drive path (`C:\…`, `C:/…`), which is always local. Two local paths are an error: `neither argument is a remote path: use <asset>[@<server>]:<path> for the remote side`.
-- The transfer runs over the bastion's **KoKo SSH port** (default `2222`) on the address the session was bound to. That port must be reachable on your network path.
+- The transfer channel: `auto` (default) rides the bastion's **KoKo SSH port** (default `2222`) and, when that port is unreachable, falls back to the **web channel** — the file-manager WebSocket over the web port. `ssh` or `web` forces one channel. The success line names the channel used: `Transferred N bytes in T (channel: web)`.
+- The web channel's limits: uploads are sequential 1 MiB chunks, the remote destination must name the file itself (no cp-style directory expansion), and the remote parent directory must already exist.
 - md5 verification runs `md5sum` on the remote through an SSH exec session, so the account needs SSH exec rights. A digest mismatch fails with `md5 verification failed`.
 - `--verify` and `--no-verify` together are refused: `--verify and --no-verify are mutually exclusive`. `--verify` alone is a no-op, verification is on by default.
 

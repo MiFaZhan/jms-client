@@ -72,6 +72,32 @@ const (
 	Download Direction = "download"
 )
 
+// Transport selects the channel a transfer rides on.
+type Transport string
+
+// Transports. TransportAuto (the zero value) tries the KoKo SSH SFTP
+// channel first and falls back to the web file-manager WebSocket when the
+// SSH port is unreachable — the common case on a web-port-only deployment.
+const (
+	TransportAuto Transport = ""
+	TransportSSH  Transport = "ssh"
+	TransportWeb  Transport = "web"
+)
+
+// ParseTransport validates a transport name from a flag or tool argument.
+func ParseTransport(raw string) (Transport, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "auto":
+		return TransportAuto, nil
+	case "ssh", "sftp":
+		return TransportSSH, nil
+	case "web":
+		return TransportWeb, nil
+	default:
+		return "", fmt.Errorf("invalid transport %q: must be auto, ssh or web", raw)
+	}
+}
+
 // Task is one file transfer.
 type Task struct {
 	Direction Direction
@@ -84,12 +110,17 @@ type Task struct {
 	// Chunk and Parallel override the defaults when non-zero.
 	Chunk    int
 	Parallel int
+	// Transport selects the channel; the zero value means auto.
+	Transport Transport
 }
 
 // Result is the outcome of one Task.
 type Result struct {
 	Bytes    int64
 	Duration time.Duration
+	// Transport reports the channel that actually moved the file:
+	// "ssh" (KoKo SFTP) or "web" (file-manager WebSocket).
+	Transport Transport
 	// MD5Local and MD5Remote are set when Verify was requested. For a
 	// relay both sides are remote: MD5Local is the source digest and
 	// MD5Remote the destination digest.
@@ -122,6 +153,9 @@ type Engine struct {
 	// open is the SFTP dial seam. Nil means dialKoKoSFTP; tests inject a
 	// fake filesystem here.
 	open func(ctx context.Context, e *Engine, asset assets.Info) (remoteFS, error)
+	// web is the web-channel transfer seam. Nil means the real
+	// webxfer-based transfer; tests inject a fake here.
+	web func(ctx context.Context, sess *auth.Session, asset assets.Info, t Task) (Result, error)
 	// terminal is the SSH-exec seam RemoteHasher uses. Nil means the real
 	// transport.
 	terminal func(ctx context.Context, e *Engine) (transport.Terminal, error)
@@ -149,8 +183,26 @@ func (e *Engine) Run(ctx context.Context, t Task) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+
+	// The web channel is a complete alternative path: it cannot reuse
+	// anything below the dial, so it returns rather than falls through.
+	if t.Transport == TransportWeb {
+		return e.runWeb(ctx, t, asset)
+	}
+
 	conn, err := e.dialSFTP(ctx, asset)
 	if err != nil {
+		// Auto mode: an unreachable KoKo SSH port is the normal shape of
+		// a web-port-only deployment, so a network-class dial failure
+		// retries over the web channel before giving up.
+		if t.Transport == TransportAuto && webFallbackEligible(err) && ctx.Err() == nil {
+			res, werr := e.runWeb(ctx, t, asset)
+			if werr == nil {
+				return res, nil
+			}
+			return res, fmt.Errorf(
+				"xfer: sftp dial failed (%v) and the web channel failed too: %w", err, werr)
+		}
 		return Result{}, err
 	}
 	// Cancelling ctx tears the connection down, which is what unblocks a
@@ -176,7 +228,7 @@ func (e *Engine) Run(ctx context.Context, t Task) (Result, error) {
 		remotePath = t.Remote
 	}
 
-	res := Result{}
+	res := Result{Transport: TransportSSH}
 	dstPath, err = expandDestination(dst, srcPath, dstPath)
 	if err != nil {
 		return res, err
@@ -223,6 +275,10 @@ func (e *Engine) Run(ctx context.Context, t Task) (Result, error) {
 // apply; t.Direction and t.Local are ignored.
 func Relay(ctx context.Context, src, dst *Engine, remoteSrc, remoteDst string, t Task) (Result, error) {
 	start := time.Now()
+	if t.Transport == TransportWeb {
+		return Result{}, errors.New(
+			"xfer: relay over the web channel is not supported; copy through two transfers")
+	}
 	if err := src.validate(); err != nil {
 		return Result{}, fmt.Errorf("xfer: relay source: %w", err)
 	}
@@ -259,7 +315,7 @@ func Relay(ctx context.Context, src, dst *Engine, remoteSrc, remoteDst string, t
 	defer stop()
 
 	srcSide, dstSide := remoteSide{fs: srcConn}, remoteSide{fs: dstConn}
-	res := Result{}
+	res := Result{Transport: TransportSSH}
 	dstPath, err := expandDestination(dstSide, remoteSrc, remoteDst)
 	if err != nil {
 		return res, err
@@ -373,7 +429,11 @@ func (e *Engine) dialSFTP(ctx context.Context, asset assets.Info) (remoteFS, err
 	return dialKoKoSFTP(ctx, e.Session, asset)
 }
 
-// dialTerminal opens the SSH exec terminal RemoteHasher runs md5sum on.
+// dialTerminal opens the exec terminal RemoteHasher runs md5sum on.
+//
+// Auto rather than forced SSH: a web-port-only deployment has no KoKo SSH
+// port, and md5sum over the WebSocket terminal is equally reliable, so
+// verification keeps working wherever the transfer itself can.
 func (e *Engine) dialTerminal(ctx context.Context) (transport.Terminal, error) {
 	if e.terminal != nil {
 		return e.terminal(ctx, e)
@@ -383,7 +443,7 @@ func (e *Engine) dialTerminal(ctx context.Context) (transport.Terminal, error) {
 		return nil, err
 	}
 	return transport.Connect(ctx, e.Session, asset, transport.ConnectOptions{
-		Backend: transport.BackendSSH,
+		Backend: transport.BackendAuto,
 	})
 }
 

@@ -214,8 +214,8 @@ ERROR: JMS_MCP_EXEC_TIMEOUT="bogus": must be a duration ("90s", "10m") or a posi
 | `jms_ls` | — | `keyword` | 列出你可以连接的资产。每个资产一行：`name  address  platform`。列表为空时输出 `No assets found.`。 |
 | `jms_resolve_asset` | `asset` | — | 把资产解析为 `name:`、`address:`、`account:`、`protocol:` —— 共四行。 |
 | `jms_exec` | `asset`、`command` | `timeout`、`account`、`protocol` | 在资产上运行一条 shell 命令并返回其输出。 |
-| `jms_sftp_upload` | `src`、`asset`、`dst` | — | 上传本地文件。结果：`OK: uploaded <src> -> <asset>:<dst> (<bytes> bytes)`。 |
-| `jms_sftp_download` | `asset`、`src`、`dst` | — | 下载文件。结果：`OK: downloaded <asset>:<src> -> <dst> (<bytes> bytes)`。 |
+| `jms_sftp_upload` | `src`、`asset`、`dst` | `transport` | 上传本地文件。结果：`OK: uploaded <src> -> <asset>:<dst> (<bytes> bytes, <channel> channel)`。 |
+| `jms_sftp_download` | `asset`、`src`、`dst` | `transport` | 下载文件。结果：`OK: downloaded <asset>:<src> -> <dst> (<bytes> bytes, <channel> channel)`。 |
 | `jms_sftp_relay` | `src_spec`、`dst_spec` | — | 在两个资产之间流式传输文件，不落本地磁盘。结果：`OK: relayed <src_spec> -> <dst_spec> (<bytes> bytes)`。 |
 | `jms_config_list` | — | — | 列出已配置的服务器，用 `*` 标记默认项。它只读取文件，从不触碰连接池，因此在任何服务器都还连不上时也能工作。输出中不会出现凭据。 |
 | `jms_asset_list` | — | — | 列出服务器上的**全部**资产，而不只是你可以连接的那些。 |
