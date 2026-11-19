@@ -159,6 +159,8 @@ An explicit `JMS_MCP_BACKEND` is not second-guessed. When the remembered backend
 
 The web channel needs only the web port, but inherits the protocol's limits: uploads are sequential 1 MiB chunks (base64 inside JSON, so throughput is lower than SFTP), the remote destination of an upload must name the file itself (the channel cannot stat it, so no cp-style directory expansion), the remote parent directory must already exist, and a download's size is not announced up front. Asset-to-asset relay stays SFTP-only. The md5 verification runs `md5sum` on the remote over an exec terminal with the same backend failover as `jms exec` (SSH first, then the WebSocket terminal), so it works on web-port-only deployments too.
 
+One more KoKo behaviour to know: the channel is rooted at the asset **platform's SFTP path** (koko `sftp_asset.go`: `platform.Protocols.GetSftpPath("sftp")`, defaulting to the account home). A requested path inside that root is passed through absolute; a path outside it is silently joined onto the root — asking for `/root/f` on a platform rooted at `/tmp` lands the file at `/tmp/root/f`. When a web-channel upload's md5 verification reports the file missing, check the platform's SFTP path; a destination under that root (or a follow-up `mv` over an exec terminal) reaches the intended location.
+
 ## Worked decision table
 
 | Configuration | `--endpoint` | Candidates tried | Failover? |
