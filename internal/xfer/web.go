@@ -98,15 +98,19 @@ func webTransfer(ctx context.Context, sess *auth.Session, asset assets.Info, t T
 // retrying over the web channel.
 //
 // Network-class failures (dial refused, timeout, handshake) are: they are
-// the signature of a web-port-only deployment. Authentication failures
-// are not — the web channel authenticates the same user against the same
-// permissions, so it would fail identically — and neither is a cancelled
-// context, which no retry can fix.
+// the signature of a web-port-only deployment. A per-dial timeout counts,
+// even though net's *timeoutError satisfies errors.Is with
+// context.DeadlineExceeded: the deadline that fired was the dialer's own
+// (transport.DialTimeout), not the caller's. Whether the caller's context
+// still has time left is the call site's ctx.Err() guard, so this
+// function only rejects a cancelled context — which no retry can fix —
+// and authentication failures, which the web channel would hit too: it
+// authenticates the same user against the same permissions.
 func webFallbackEligible(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) {
 		return false
 	}
 	var authErr *api.AuthError

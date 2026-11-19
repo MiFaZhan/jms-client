@@ -101,6 +101,34 @@ func TestAuthFailureDoesNotFallBack(t *testing.T) {
 	}
 }
 
+func TestDialTimeoutIsFallbackEligible(t *testing.T) {
+	// net's *timeoutError answers errors.Is(err, context.DeadlineExceeded)
+	// with true even when the deadline that fired was the dialer's own
+	// timeout, not the caller's context. The 2222 port sitting behind a
+	// DROP firewall produces exactly this error, so the fallback must
+	// accept it. The caller-context expiry is handled separately by the
+	// ctx.Err() guard at the call site.
+	dialTimeout := &net.OpError{
+		Op: "dial", Net: "tcp",
+		Err: context.DeadlineExceeded, // mimics *net.timeoutError's Is()
+	}
+	if !webFallbackEligible(dialTimeout) {
+		t.Fatal("a dial timeout must be eligible for the web fallback")
+	}
+	if !webFallbackEligible(networkDialError()) {
+		t.Fatal("a refused dial must be eligible for the web fallback")
+	}
+	if webFallbackEligible(context.Canceled) {
+		t.Fatal("a cancelled context must not be eligible")
+	}
+	if webFallbackEligible(&api.AuthError{StatusCode: 401}) {
+		t.Fatal("an auth failure must not be eligible")
+	}
+	if webFallbackEligible(nil) {
+		t.Fatal("nil must not be eligible")
+	}
+}
+
 func TestBothChannelsFailReportsBothErrors(t *testing.T) {
 	webErr := errors.New("web dial failed")
 	e, _ := newFallbackEnv(t, networkDialError(), Result{}, webErr)
