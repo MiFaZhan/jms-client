@@ -159,7 +159,9 @@ SSH 后端自己没有计时器，只有命令上下文能停它。需要更长�
 
 显式设置的 `JMS_MCP_BACKEND` 不会被质疑。当记住的后端在本次调用里已经失败时，会换成另一个具体后端；`auto` 原样返回，因为它本来就意味着"两个都试"。池化的终端保持它建立时的后端：后端不在池的 key 里。
 
-`jms sftp` 跑在 KoKo 的 SSH 端口上（`ssh_port`，默认 `2222`），这个端口必须可达。连接令牌必须用 `protocol=sftp` 与 `connect_method=web_sftp` 创建；用 `ssh` 或 `web_cli` 的令牌会落到 KoKo 的虚拟根目录下，所有路径都报 "please select one of the assets"。md5 校验是在远端通过 SSH exec 终端跑 `md5sum`，同样依赖这个端口。传输本身按 1 MiB 分块、4 路并发。
+`jms sftp` 有两条通道。默认（`--transport auto`）走 KoKo 的 SSH 端口（`ssh_port`，默认 `2222`），按 1 MiB 分块、4 路并发；该端口不可达时 —— 只开放 Web 端口的部署的常态 —— 传输自动回退到 **Web 通道**，也就是浏览器文件管理器走的那条 WebSocket（`/koko/ws/sftp/`，令牌对 `protocol=sftp` + `connect_method=web_sftp`）。用 `ssh` 或 `web_cli` 的令牌会落到 KoKo 的虚拟根目录下，所有路径都报 "please select one of the assets"。`--transport ssh` 或 `web` 强制指定其一并关闭回退。
+
+Web 通道只需要 Web 端口，但受协议限制：上传按 1 MiB 分块串行传输（base64 包在 JSON 里，吞吐低于 SFTP），上传的远端目标必须写完整文件路径（通道无法 stat，不做 cp 式目录展开），远端父目录必须已存在，下载前不知远端文件大小。资产间中继（relay）仍只支持 SFTP。md5 校验在远端通过 exec 终端跑 `md5sum`，后端回退与 `jms exec` 相同（先 SSH、再 WebSocket 终端），因此只开放 Web 端口的部署也能校验。
 
 ## 判定表
 

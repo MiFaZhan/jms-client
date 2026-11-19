@@ -27,7 +27,7 @@ Reaching a bastion normally means a browser tab, or a `~/.ssh/config` you mainta
 
 - **JumpServer v4** with the **KoKo** component reachable from your machine. JumpServer v3 and earlier are not supported.
 - A JumpServer account already authorized for the assets you want to reach.
-- The WebSocket terminal backend needs only a reachable HTTP(S) address. SFTP and the SSH backend additionally need KoKo's SSH port (default `2222`) open — many deployments expose only the web port.
+- The WebSocket terminal backend and the web transfer channel need only a reachable HTTP(S) address. The SFTP and SSH backends additionally prefer KoKo's SSH port (default `2222`); when it is closed — many deployments expose only the web port — file transfers automatically fall back to the web channel (`--transport web` forces it).
 
 ## Install
 

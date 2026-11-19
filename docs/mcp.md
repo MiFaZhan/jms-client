@@ -214,8 +214,8 @@ Every tool takes two optional arguments in addition to its own:
 | `jms_ls` | — | `keyword` | Lists the assets you may connect to. One line per asset: `name  address  platform`. `No assets found.` when the list is empty. |
 | `jms_resolve_asset` | `asset` | — | Resolves an asset to `name:`, `address:`, `account:`, `protocol:` — four lines. |
 | `jms_exec` | `asset`, `command` | `timeout`, `account`, `protocol` | Runs a shell command on an asset and returns its output. |
-| `jms_sftp_upload` | `src`, `asset`, `dst` | — | Uploads a local file. Result: `OK: uploaded <src> -> <asset>:<dst> (<bytes> bytes)`. |
-| `jms_sftp_download` | `asset`, `src`, `dst` | — | Downloads a file. Result: `OK: downloaded <asset>:<src> -> <dst> (<bytes> bytes)`. |
+| `jms_sftp_upload` | `src`, `asset`, `dst` | `transport` | Uploads a local file. Result: `OK: uploaded <src> -> <asset>:<dst> (<bytes> bytes, <channel> channel)`. |
+| `jms_sftp_download` | `asset`, `src`, `dst` | `transport` | Downloads a file. Result: `OK: downloaded <asset>:<src> -> <dst> (<bytes> bytes, <channel> channel)`. |
 | `jms_sftp_relay` | `src_spec`, `dst_spec` | — | Streams a file between two assets, no local disk. Result: `OK: relayed <src_spec> -> <dst_spec> (<bytes> bytes)`. |
 | `jms_config_list` | — | — | Lists the configured servers, marking the default with `*`. Reads the file only and never touches the pool, so it works before any server is reachable. No credential appears in the output. |
 | `jms_asset_list` | — | — | Lists **every** asset on the server, not only the ones you may connect to. |
@@ -230,7 +230,8 @@ Every tool takes two optional arguments in addition to its own:
 Notes that change what you do:
 
 - A **newly created asset is not reachable** until it is granted. `jms_asset_list` shows it, `jms_ls` does not.
-- `jms_sftp_relay` takes `<asset>[@<server>]:<path>` specs, not separate arguments. The **first** colon splits host from path, so a colon inside the path survives; the **last** `@` inside the host splits the server alias.
+- `jms_sftp_upload` / `jms_sftp_download` accept `transport`: `auto` (default) rides the KoKo SSH port and falls back to the web file-manager channel when that port is unreachable; `ssh` or `web` forces one channel. On the web channel the upload `dst` must name the file itself and its parent directory must exist.
+- `jms_sftp_relay` takes `<asset>[@<server>]:<path>` specs, not separate arguments. The **first** colon splits host from path, so a colon inside the path survives; the **last** `@` inside the host splits the server alias. Relay stays SFTP-only (no web fallback).
 - `jms_exec`'s `timeout` is in **seconds**. Omitted or `0` means `JMS_MCP_EXEC_TIMEOUT`, else 5 minutes.
 - `jms_asset_revoke` fails with `ERROR: no permission matches "<target>"` when nothing matches exactly.
 

@@ -27,7 +27,7 @@ active
 
 - **JumpServer v4**，且 **KoKo** 组件能从你的机器访问。JumpServer v3 及更早版本不受支持。
 - 一个已获得目标资产授权的 JumpServer 账号。
-- WebSocket 终端后端只要求能访问一个 HTTP(S) 地址。SFTP 与 SSH 后端还需要 KoKo 的 SSH 端口（默认 `2222`）在网络路径上可达 —— 很多部署只开放 Web 端口。
+- WebSocket 终端后端与 Web 传输通道只要求能访问一个 HTTP(S) 地址。SFTP 与 SSH 后端优先使用 KoKo 的 SSH 端口（默认 `2222`）；该端口不通时（很多部署只开放 Web 端口），文件传输会自动回退到 Web 通道（`--transport web` 可强制指定）。
 
 ## 安装
 

@@ -211,11 +211,13 @@ MD5 verified: 9a0364b9e99bb480dd25e1f0284c8555
 | `--chunk` | int | `0` | — | 分块大小（字节）；`0` 表示 1 MiB |
 | `--endpoint` | string | `""` | — | 强制使用地址：`internal` 或 `external` |
 | `--account` | string | `""` | — | 覆盖账号 |
+| `--transport` | string | `auto` | — | 传输通道：`auto`、`ssh` 或 `web` |
 
 - 远端规格是 `<asset>[@<server>]:<path>`。按**第一个冒号**切分主机与路径，所以路径里可以再有冒号。远端路径为空会被拒绝。
 - 方向自动推断：目标是远端就是上传，源是远端就是下载。
 - 一侧包含冒号即视为远端，但 Windows 盘符路径（`C:\…`、`C:/…`）始终算本地。两侧都是本地路径会报错：`neither argument is a remote path: use <asset>[@<server>]:<path> for the remote side`。
-- 传输走堡垒机的 **KoKo SSH 端口**（默认 `2222`），具体是会话绑定到的那个地址。该端口必须在你的网络路径上可达。
+- 传输通道：`auto`（默认）走堡垒机的 **KoKo SSH 端口**（默认 `2222`），该端口不可达时自动回退到 **Web 通道**（走 Web 端口的文件管理 WebSocket）。`ssh` 或 `web` 强制指定其一。成功输出会标注实际通道：`Transferred N bytes in T (channel: web)`。
+- Web 通道的限制：上传按 1 MiB 分块串行传输，远端目标必须写完整文件路径（不做 cp 式目录展开），且远端父目录必须已存在。
 - md5 校验会在远端通过 SSH exec 会话执行 `md5sum`，因此账号需要 SSH 执行权限。摘要不一致会失败并报 `md5 verification failed`。
 - `--verify` 与 `--no-verify` 不能同时出现：`--verify and --no-verify are mutually exclusive`。单独写 `--verify` 是空操作，默认就开启校验。
 
