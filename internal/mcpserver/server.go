@@ -224,6 +224,8 @@ type TransferRequest struct {
 	// Chunk and Parallel override the xfer defaults when non-zero.
 	Chunk    int
 	Parallel int
+	// Transport selects the channel: empty/auto, ssh or web.
+	Transport xfer.Transport
 }
 
 // RelayRequest is one remote-to-remote transfer.
@@ -930,6 +932,15 @@ func strProp(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}
 }
 
+// enumProp is a string property restricted to a fixed vocabulary.
+func enumProp(description string, values ...string) map[string]any {
+	return map[string]any{
+		"type":        "string",
+		"description": description,
+		"enum":        values,
+	}
+}
+
 // intProp is an integer property.
 func intProp(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
@@ -1226,6 +1237,7 @@ type uploadArgs struct {
 	Dst        string `json:"dst"`
 	Server     string `json:"server,omitempty"`
 	ConfigPath string `json:"config_path,omitempty"`
+	Transport  string `json:"transport,omitempty"`
 }
 
 // downloadArgs are the jms_sftp_download arguments.
@@ -1235,6 +1247,17 @@ type downloadArgs struct {
 	Dst        string `json:"dst"`
 	Server     string `json:"server,omitempty"`
 	ConfigPath string `json:"config_path,omitempty"`
+	Transport  string `json:"transport,omitempty"`
+}
+
+// transportArg validates the optional transport argument shared by the
+// transfer tools; the empty value means auto.
+func transportArg(raw string) (xfer.Transport, error) {
+	t, err := xfer.ParseTransport(raw)
+	if err != nil {
+		return "", fmt.Errorf("transport: %w", err)
+	}
+	return t, nil
 }
 
 // relayArgs are the jms_sftp_relay arguments.
@@ -1247,14 +1270,16 @@ type relayArgs struct {
 // uploadTool uploads a local file to an asset.
 func (s *Server) uploadTool() (*mcp.Tool, mcp.ToolHandler) {
 	tool := &mcp.Tool{
-		Name:        ToolSFTPUpload,
-		Description: "Upload a local file to an asset via SFTP.",
+		Name:  ToolSFTPUpload,
+		Description: "Upload a local file to an asset via SFTP, falling back to the web " +
+			"file-manager channel when the KoKo SSH port is unreachable.",
 		InputSchema: objectSchema([]string{"src", "asset", "dst"}, map[string]map[string]any{
 			"src":         strProp("Local source path."),
 			"asset":       strProp("Target asset, optionally <asset>@<server>."),
-			"dst":         strProp("Destination path inside the asset."),
+			"dst":         strProp("Destination path inside the asset (must name the file itself when transport is web)."),
 			"server":      strProp("Server alias; the default server when omitted."),
 			"config_path": strProp("Configuration file path override."),
+			"transport":   enumProp("Transfer channel: auto tries SSH SFTP then the web channel (default), ssh forces the KoKo SSH port, web forces the file-manager WebSocket.", "auto", "ssh", "web"),
 		}),
 	}
 	return tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1268,6 +1293,10 @@ func (s *Server) uploadTool() (*mcp.Tool, mcp.ToolHandler) {
 		}
 		if strings.TrimSpace(args.Src) == "" || strings.TrimSpace(args.Dst) == "" {
 			return errorResult(errors.New("src and dst are required")), nil
+		}
+		transport, err := transportArg(args.Transport)
+		if err != nil {
+			return errorResult(err), nil
 		}
 
 		sess, srv, err := s.sessionFor(ctx, serverName, args.ConfigPath)
@@ -1284,6 +1313,7 @@ func (s *Server) uploadTool() (*mcp.Tool, mcp.ToolHandler) {
 			Remote:    args.Dst,
 			Direction: xfer.Upload,
 			Verify:    true,
+			Transport: transport,
 		}, transferSide{serverName: serverName, srv: srv, current: sess})
 		if err != nil {
 			s.endOp(started, srv.Name, assetName, "sftp", "upload "+args.Src,
@@ -1291,8 +1321,8 @@ func (s *Server) uploadTool() (*mcp.Tool, mcp.ToolHandler) {
 			return errorResult(err), nil
 		}
 
-		text := fmt.Sprintf("OK: uploaded %s -> %s:%s (%d bytes)",
-			args.Src, assetName, args.Dst, result.Bytes)
+		text := fmt.Sprintf("OK: uploaded %s -> %s:%s (%d bytes, %s channel)",
+			args.Src, assetName, args.Dst, result.Bytes, channelLabel(result.Transport))
 		s.endOp(started, srv.Name, assetName, "sftp", "upload "+args.Src,
 			transferOutcome{output: text, outputBytes: int(result.Bytes)})
 		return textResult(text), nil
@@ -1302,14 +1332,16 @@ func (s *Server) uploadTool() (*mcp.Tool, mcp.ToolHandler) {
 // downloadTool downloads a file from an asset.
 func (s *Server) downloadTool() (*mcp.Tool, mcp.ToolHandler) {
 	tool := &mcp.Tool{
-		Name:        ToolSFTPDownload,
-		Description: "Download a file from an asset to the local machine via SFTP.",
+		Name:  ToolSFTPDownload,
+		Description: "Download a file from an asset to the local machine via SFTP, falling " +
+			"back to the web file-manager channel when the KoKo SSH port is unreachable.",
 		InputSchema: objectSchema([]string{"asset", "src", "dst"}, map[string]map[string]any{
 			"asset":       strProp("Source asset, optionally <asset>@<server>."),
 			"src":         strProp("Source path inside the asset."),
 			"dst":         strProp("Local destination path."),
 			"server":      strProp("Server alias; the default server when omitted."),
 			"config_path": strProp("Configuration file path override."),
+			"transport":   enumProp("Transfer channel: auto tries SSH SFTP then the web channel (default), ssh forces the KoKo SSH port, web forces the file-manager WebSocket.", "auto", "ssh", "web"),
 		}),
 	}
 	return tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1323,6 +1355,10 @@ func (s *Server) downloadTool() (*mcp.Tool, mcp.ToolHandler) {
 		}
 		if strings.TrimSpace(args.Src) == "" || strings.TrimSpace(args.Dst) == "" {
 			return errorResult(errors.New("src and dst are required")), nil
+		}
+		transport, err := transportArg(args.Transport)
+		if err != nil {
+			return errorResult(err), nil
 		}
 
 		sess, srv, err := s.sessionFor(ctx, serverName, args.ConfigPath)
@@ -1339,6 +1375,7 @@ func (s *Server) downloadTool() (*mcp.Tool, mcp.ToolHandler) {
 			Remote:    args.Src,
 			Direction: xfer.Download,
 			Verify:    true,
+			Transport: transport,
 		}, transferSide{serverName: serverName, srv: srv, current: sess})
 		if err != nil {
 			s.endOp(started, srv.Name, assetName, "sftp", "download "+args.Src,
@@ -1346,8 +1383,8 @@ func (s *Server) downloadTool() (*mcp.Tool, mcp.ToolHandler) {
 			return errorResult(err), nil
 		}
 
-		text := fmt.Sprintf("OK: downloaded %s:%s -> %s (%d bytes)",
-			assetName, args.Src, args.Dst, result.Bytes)
+		text := fmt.Sprintf("OK: downloaded %s:%s -> %s (%d bytes, %s channel)",
+			assetName, args.Src, args.Dst, result.Bytes, channelLabel(result.Transport))
 		s.endOp(started, srv.Name, assetName, "sftp", "download "+args.Src,
 			transferOutcome{output: text, outputBytes: int(result.Bytes)})
 		return textResult(text), nil
@@ -1566,7 +1603,20 @@ func defaultTransfer(ctx context.Context, req TransferRequest) (xfer.Result, err
 		Verify:    req.Verify,
 		Chunk:     req.Chunk,
 		Parallel:  req.Parallel,
+		Transport: req.Transport,
 	})
+}
+
+// channelLabel names the channel that moved a file, for result texts.
+func channelLabel(t xfer.Transport) string {
+	switch t {
+	case xfer.TransportWeb:
+		return "web"
+	case xfer.TransportSSH:
+		return "ssh"
+	default:
+		return "auto"
+	}
 }
 
 // remoteSpec is one parsed <asset>[@<server>]:<path> argument.

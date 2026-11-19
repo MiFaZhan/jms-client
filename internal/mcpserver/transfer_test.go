@@ -138,3 +138,26 @@ func TestDefaultTransferPassesAssetNamesToRelayEngines(t *testing.T) {
 		t.Fatalf("relay src resolve searches = %v, want [%q, ...]", searches, srcName)
 	}
 }
+
+// TestDefaultTransferRoutesWebTransportToTheWebChannel pins the transport
+// field's plumbing: a request asking for the web channel must attempt the
+// file-manager WebSocket (a webxfer error), not the KoKo SSH dial.
+func TestDefaultTransferRoutesWebTransportToTheWebChannel(t *testing.T) {
+	const assetName = "web-asset"
+	apiSrv := newAssetAPIServer(t, assetName)
+	req := TransferRequest{
+		Session:   testSession(apiSrv.URL),
+		Asset:     assetName,
+		Direction: xfer.Upload,
+		Local:     t.TempDir() + "/up.bin",
+		Remote:    "/tmp/up.bin",
+		Transport: xfer.TransportWeb,
+	}
+	_, err := defaultTransfer(context.Background(), req)
+	if err == nil {
+		t.Fatal("transfer succeeded against a server with no WebSocket endpoint")
+	}
+	if !strings.Contains(err.Error(), "webxfer") {
+		t.Fatalf("error %v does not come from the web channel", err)
+	}
+}

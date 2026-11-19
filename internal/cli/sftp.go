@@ -27,6 +27,7 @@ type sftpOptions struct {
 	chunk     int
 	endpoint  string
 	account   string
+	transport string
 }
 
 // newSFTPCommand builds `jms sftp <src> <dst>`.
@@ -56,6 +57,8 @@ an error: use cp.`,
 	cmd.Flags().IntVar(&opts.chunk, "chunk", 0, "Chunk size in bytes")
 	cmd.Flags().StringVar(&opts.endpoint, "endpoint", "", "Force an address: internal|external")
 	cmd.Flags().StringVar(&opts.account, "account", "", "Account override")
+	cmd.Flags().StringVar(&opts.transport, "transport", "auto",
+		"Transfer channel: auto (SSH SFTP, web fallback), ssh, web")
 	return cmd
 }
 
@@ -171,10 +174,15 @@ func runSFTP(cmd *cobra.Command, deps Deps, src, dst string, opts sftpOptions) e
 	if err != nil {
 		return err
 	}
+	transportKind, err := xfer.ParseTransport(opts.transport)
+	if err != nil {
+		return fmt.Errorf("sftp: %w", err)
+	}
 	task := parsed.task
 	task.Verify = !opts.noVerify
 	task.Chunk = opts.chunk
 	task.Parallel = opts.parallel
+	task.Transport = transportKind
 
 	force, err := parseEndpointKind(opts.endpoint)
 	if err != nil {
@@ -204,9 +212,23 @@ func runSFTP(cmd *cobra.Command, deps Deps, src, dst string, opts sftpOptions) e
 		return err
 	}
 
-	fmt.Fprintf(deps.Out, "Transferred %d bytes in %s\n", res.Bytes, res.Duration)
+	fmt.Fprintf(deps.Out, "Transferred %d bytes in %s (channel: %s)\n",
+		res.Bytes, res.Duration, channelLabel(res.Transport))
 	if res.Verified {
 		fmt.Fprintf(deps.Out, "MD5 verified: %s\n", res.MD5Remote)
 	}
 	return nil
+}
+
+// channelLabel names the channel that moved the file; auto resolves to
+// whichever channel the engine ended up on.
+func channelLabel(t xfer.Transport) string {
+	switch t {
+	case xfer.TransportWeb:
+		return "web"
+	case xfer.TransportSSH:
+		return "ssh"
+	default:
+		return "auto"
+	}
 }
